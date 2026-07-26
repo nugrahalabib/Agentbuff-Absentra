@@ -9,6 +9,7 @@ import { db, now } from './db.js'
 import { id } from './ids.js'
 import { mapMembership } from './map.js'
 import { can, type Actor, type Capability } from '../domain/rbac.js'
+import { companyOpen } from './agentbuffGate.js'
 
 export const SESSION_COOKIE = 'absentra_sid'
 const SESSION_DAYS = 30
@@ -85,10 +86,21 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
   next()
 }
 
-/** 400 if no active tenant selected. */
-export function requireCompany(req: Request, res: Response, next: NextFunction) {
+/**
+ * 400 if no active tenant selected. Also the COMPANY-FREEZE gate: the whole
+ * company is blocked (read + write) the moment its owner's AgentBuff access
+ * lapses — but data is never deleted, so re-subscribing lifts the freeze on the
+ * next check. companyOpen fails safe internally (cache + outage grace).
+ */
+export async function requireCompany(req: Request, res: Response, next: NextFunction) {
   if (!req.ctx) return res.status(401).json({ error: 'unauthenticated' })
   if (!req.ctx.companyId || !req.ctx.actor) return res.status(403).json({ error: 'no_active_company' })
+  try {
+    const open = await companyOpen(req.ctx.companyId)
+    if (!open.entitled) return res.status(403).json({ error: 'company_frozen', reason: open.reason })
+  } catch {
+    // A gate bug must not brick the app; the login gate + fresh checks still apply.
+  }
   next()
 }
 

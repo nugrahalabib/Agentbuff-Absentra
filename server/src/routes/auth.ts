@@ -7,6 +7,7 @@ import { SESSION_COOKIE, createSession, destroySession, setSessionCompany, requi
 import { hashPassword, verifyPassword } from '../lib/password.js'
 import { audit } from '../lib/audit.js'
 import { config } from '../lib/config.js'
+import { checkEntitlementStrict } from '../lib/agentbuffGate.js'
 
 export const authRouter = Router()
 
@@ -115,6 +116,19 @@ authRouter.get('/google/callback', async (req, res) => {
 
     const user = upsertGoogleUser({ sub: info.sub, email: info.email, name: info.name, picture: info.picture })
     const memberships = membershipsForUser(user.id)
+    // AGENTBUFF GATE: a would-be OR returning OWNER must be an entitled AgentBuff
+    // buyer (active OP Buff/trial + owns this product). Invited STAFF (they carry a
+    // non-owner membership after the pending-claim above) pass here; the per-request
+    // company-freeze gate covers their access instead. A lapsed owner is refused at
+    // the door — no session is granted, but their data is untouched.
+    const isOwner = memberships.some((m) => m.membership.role === 'owner')
+    const isNewUser = memberships.length === 0
+    if (isNewUser || isOwner) {
+      const ent = await checkEntitlementStrict(user.email)
+      if (!ent.entitled) {
+        return res.redirect(`${config.appOrigin}/login?gate=${encodeURIComponent(ent.reason)}`)
+      }
+    }
     const sid = createSession(user.id, memberships[0]?.company.id ?? null)
     res.cookie(SESSION_COOKIE, sid, cookieOpts)
     issueRefresh(res, user.id, memberships[0]?.company.id ?? null)

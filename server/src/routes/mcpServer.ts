@@ -26,6 +26,7 @@ import { can, type Actor, type Capability } from '../domain/rbac.js'
 import { computeRecapRow, type OvertimeBlock } from '../domain/payroll.js'
 import { mapPolicy } from '../lib/map.js'
 import { sha256 } from './mcp.js'
+import { companyOpen } from '../lib/agentbuffGate.js'
 
 export const mcpServerRouter = Router()
 
@@ -703,6 +704,9 @@ const PROMPTS: Prompt[] = [
 mcpServerRouter.post('/', async (req, res) => {
   const conn = resolveConn(req)
   if (!conn) return res.status(401).json(rpcErr(req.body?.id ?? null, -32000, 'unauthorized'))
+  // AGENTBUFF FREEZE: the agent stops too when the company's owner access lapses.
+  const open = await companyOpen(conn.companyId)
+  if (!open.entitled) return res.status(403).json(rpcErr(req.body?.id ?? null, -32010, 'company_frozen', { reason: open.reason }))
   const { id: rid, method, params } = req.body ?? {}
 
   if (method === 'initialize') {
