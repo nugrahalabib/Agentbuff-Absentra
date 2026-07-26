@@ -1,0 +1,8 @@
+node_modules/
+.npm-cache/
+absentra.db
+absentra.db-wal
+absentra.db-shm
+*.local
+.DS_Store
+.env

@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+**/node_modules/
+.npm-cache/
+**/.npm-cache/
+
+# Builds
+dist/
+**/dist/
+*.tsbuildinfo
+
+# Backend SQLite database (local data)
+server/absentra.db
+server/absentra.db-wal
+server/absentra.db-shm
+
+# Env & secrets
+.env
+.env.*
+secrets/
+
+# Editor / OS
+.DS_Store
+*.local
+.vscode/
+.idea/
+
+# Local backups & portfolio showcase staging (never commit into the repo)
+absentra-backup-*.tar.gz
+absentra-backup-*.zip
+absentra-showcase/
+
+# Brief/draft untuk produk lain yang kebetulan ditulis di working dir ini
+BRIEF-*.md
