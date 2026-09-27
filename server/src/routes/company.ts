@@ -1,10 +1,11 @@
-import { Router } from 'express'
+import { Router, type NextFunction, type Request, type Response } from 'express'
 import { z } from 'zod'
 import { db, now } from '../lib/db.js'
 import { id } from '../lib/ids.js'
 import { mapCompany, mapPolicy } from '../lib/map.js'
 import { requireAuth, requireCompany, requireCap, setSessionCompany } from '../lib/context.js'
 import { audit } from '../lib/audit.js'
+import { ownerStatusFresh } from '../lib/agentbuffGate.js'
 
 export const companyRouter = Router()
 
@@ -17,8 +18,21 @@ const DEFAULT_POLICY = {
   photoRetentionDays: 90,
 }
 
+/**
+ * Only an entitled AgentBuff owner may create a company (Absentra is a paid
+ * marketplace product). Invited staff signing in with Google have no AgentBuff
+ * identity, so they cannot turn themselves into owners here. Separate middleware
+ * so the handler below stays synchronous (Express 4 does not route rejected
+ * promises to the error handler).
+ */
+function pastikanBolehBuatPerusahaan(req: Request, res: Response, next: NextFunction) {
+  ownerStatusFresh(req.ctx!.userId)
+    .then((hak) => (hak.entitled ? next() : res.status(403).json({ error: 'perlu_agentbuff', reason: hak.reason })))
+    .catch(next)
+}
+
 /** Owner onboarding — create a company; the creator becomes Owner (PRD §6.1, §7.2.1). */
-companyRouter.post('/companies', requireAuth, (req, res) => {
+companyRouter.post('/companies', requireAuth, pastikanBolehBuatPerusahaan, (req, res) => {
   const body = z.object({
     displayName: z.string().min(1),
     legalName: z.string().min(1).optional(),

@@ -4,10 +4,15 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '@/lib/api/client'
 import { BottomSheet, Button, Field, Input } from '@/components/ui'
 import { t } from '@/i18n'
+import { URL_MASUK_AGENTBUFF } from '@/lib/pesanMasuk'
 
 export type AuthModalMode = 'login' | 'register'
 
-/** Compact Google auth dialog for landing (and deep-link pages). */
+/**
+ * Auth dialog for landing (and deep-link pages). OWNERS sign in / register with
+ * "Masuk dengan AgentBuff"; invited STAFF sign in with Google (the email their
+ * owner/admin invited).
+ */
 export function AuthModal({
   open,
   mode,
@@ -27,18 +32,47 @@ export function AuthModal({
   const googleHref = isRegister
     ? '/api/auth/google/start?next=/onboarding%3Fowner%3D1'
     : '/api/auth/google/start'
+  const agentbuffHref = isRegister ? `${URL_MASUK_AGENTBUFF}?next=/onboarding%3Fowner%3D1` : URL_MASUK_AGENTBUFF
+  const ab = !!cfg.data?.agentbuffEnabled
 
   return (
     <BottomSheet open={open} onClose={onClose} title={title}>
       <div className="flex flex-col gap-3">
         <p className="text-sm text-text-muted">
-          {isRegister
-            ? 'Khusus pemilik usaha. Lanjut dengan Google, lalu kami pandu menyiapkan perusahaan.'
-            : 'Masuk dengan akun Google. Karyawan: buka link undangan dari admin.'}
+          {ab
+            ? isRegister
+              ? 'Khusus pemilik usaha. Lanjut dengan akun AgentBuff, lalu kami pandu menyiapkan perusahaan.'
+              : 'Pemilik usaha masuk dengan akun AgentBuff. Karyawan masuk dengan Google sesuai email undangan.'
+            : isRegister
+              ? 'Khusus pemilik usaha. Lanjut dengan Google, lalu kami pandu menyiapkan perusahaan.'
+              : 'Masuk dengan akun Google. Karyawan: buka link undangan dari admin.'}
         </p>
 
         {cfg.isLoading ? (
           <p className="text-sm text-text-muted">Memuat…</p>
+        ) : ab ? (
+          <>
+            <a
+              href={agentbuffHref}
+              className="flex min-h-touch w-full items-center justify-center gap-2 rounded-md bg-primary font-semibold text-on-primary transition-colors hover:bg-primary-pressed"
+            >
+              <img src="/agentbuff-logo.png" alt="" width={20} height={20} className="rounded bg-white p-0.5" />
+              {isRegister ? 'Daftar dengan AgentBuff' : 'Masuk dengan AgentBuff'}
+            </a>
+            <p className="text-center text-xs text-text-muted">
+              Belum punya akun AgentBuff? Daftar gratis di{' '}
+              <a href="https://agentbuff.id" target="_blank" rel="noopener noreferrer" className="font-semibold text-primary hover:underline">agentbuff.id</a>
+              , lalu ambil Absentra di Marketplace.
+            </p>
+            {!isRegister && cfg.data?.googleEnabled && (
+              <a
+                href={googleHref}
+                className="flex min-h-touch w-full items-center justify-center gap-2 rounded-md border border-border font-semibold text-text transition-colors hover:bg-surface"
+              >
+                <GoogleG /> Karyawan: masuk dengan Google
+              </a>
+            )}
+          </>
         ) : cfg.data?.googleEnabled ? (
           <a
             href={googleHref}

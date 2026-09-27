@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { api } from '@/lib/api/client'
+import { api, ApiError } from '@/lib/api/client'
+import { pesanMasuk, URL_MASUK_AGENTBUFF } from '@/lib/pesanMasuk'
 import { Button, Card, Field, Input, Select } from '@/components/ui'
 import { IconCheck, IconMapPin, IconUser, IconInbox } from '@/components/ui/icons'
 import { parseLatLong } from '@/lib/geoLink'
@@ -25,6 +26,7 @@ export function OnboardingPage() {
   const [inviteInput, setInviteInput] = useState('')
   const [step, setStep] = useState(0)
   const [busy, setBusy] = useState(false)
+  const [galatBuat, setGalatBuat] = useState<string | null>(null)
 
   // step 0 — company
   const [displayName, setDisplayName] = useState('')
@@ -53,10 +55,18 @@ export function OnboardingPage() {
 
   const createCompany = async () => {
     setBusy(true)
+    setGalatBuat(null)
     try {
       await api.createCompany({ displayName, businessType, timezone, address: address || undefined, workweekType })
       await qc.invalidateQueries({ queryKey: ['me'] })
       setStep(1)
+    } catch (err) {
+      // Hanya pemilik yang masuk lewat AgentBuff (dan berhak) boleh membuat perusahaan.
+      if (err instanceof ApiError && err.body?.error === 'perlu_agentbuff') {
+        setGalatBuat(pesanMasuk(String(err.body?.reason ?? 'perlu_agentbuff')))
+      } else {
+        throw err
+      }
     } finally { setBusy(false) }
   }
   const createBranch = async () => {
@@ -140,6 +150,14 @@ export function OnboardingPage() {
               <Field label="Minggu kerja" helper="Memengaruhi pengali lembur"><Select value={workweekType} onChange={(e) => setWorkweek((e.target as HTMLSelectElement).value as any)}><option value="six_day">6 hari/minggu</option><option value="five_day">5 hari/minggu</option></Select></Field>
             </div>
             <Field label="Alamat (opsional)"><Input value={address} onChange={(e) => setAddress(e.target.value)} /></Field>
+            {galatBuat && (
+              <div className="rounded-md bg-warning/10 p-3 text-sm text-warning" role="alert">
+                <p>{galatBuat}</p>
+                <a href={`${URL_MASUK_AGENTBUFF}?next=/onboarding%3Fowner%3D1`} className="mt-2 inline-block font-semibold text-primary hover:underline">
+                  Masuk dengan AgentBuff →
+                </a>
+              </div>
+            )}
             <Button fullWidth loading={busy} disabled={!displayName} onClick={createCompany}>Lanjut</Button>
           </div>
         )}

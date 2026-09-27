@@ -7,6 +7,7 @@ import {
   IconUsers, IconUser, IconGrid, IconWifiOff, IconSun, IconMoon, IconCheckCircle,
 } from '@/components/ui/icons'
 import { AuthModal, type AuthModalMode } from '@/features/login/AuthModal'
+import { pesanMasuk } from '@/lib/pesanMasuk'
 
 /** Public marketing landing for Absentra (shown at "/" to visitors). */
 export function LandingPage() {
@@ -53,7 +54,7 @@ export function LandingPage() {
 
       {oauthError && authMode === 'login' && (
         <div className="fixed left-1/2 top-4 z-[60] w-[min(100%-2rem,24rem)] -translate-x-1/2 rounded-md bg-danger/10 p-3 text-center text-sm text-danger shadow-lg" role="alert">
-          Login Google gagal ({oauthError}). Coba lagi.
+          {pesanMasuk(oauthError)}
         </div>
       )}
 

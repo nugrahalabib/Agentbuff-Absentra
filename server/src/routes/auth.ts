@@ -7,7 +7,8 @@ import { SESSION_COOKIE, createSession, destroySession, setSessionCompany, requi
 import { hashPassword, verifyPassword } from '../lib/password.js'
 import { audit } from '../lib/audit.js'
 import { config } from '../lib/config.js'
-import { checkEntitlementStrict } from '../lib/agentbuffGate.js'
+import { checkEntitlementStrict, forgetOwner } from '../lib/agentbuffGate.js'
+import { bahanBaru, tukarKode, urlOtorisasi } from '../lib/agentbuffMasuk.js'
 
 export const authRouter = Router()
 
@@ -48,6 +49,7 @@ authRouter.post('/refresh', (req, res) => {
 authRouter.get('/config', (_req, res) => res.json({
   googleEnabled: config.googleEnabled,
   passwordAuthEnabled: config.passwordAuthEnabled,
+  agentbuffEnabled: config.agentbuffEnabled,
 }))
 
 /** Upsert a global user from a verified Google profile + claim pending invites. */
@@ -124,9 +126,16 @@ authRouter.get('/google/callback', async (req, res) => {
     const isOwner = memberships.some((m) => m.membership.role === 'owner')
     const isNewUser = memberships.length === 0
     if (isNewUser || isOwner) {
+      // Since "Masuk dengan AgentBuff": owners and would-be owners sign in through
+      // AgentBuff (which enforces subscription + product ownership). Google stays
+      // for invited STAFF only. The account/data is untouched — the owner simply
+      // uses the AgentBuff button next time (matched by the same email).
+      if (config.agentbuffEnabled) {
+        return res.redirect(`${config.appOrigin}/login?error=pakai_agentbuff`)
+      }
       const ent = await checkEntitlementStrict(user.email)
       if (!ent.entitled) {
-        return res.redirect(`${config.appOrigin}/login?gate=${encodeURIComponent(ent.reason)}`)
+        return res.redirect(`${config.appOrigin}/login?error=${encodeURIComponent(ent.reason)}`)
       }
     }
     const sid = createSession(user.id, memberships[0]?.company.id ?? null)
@@ -139,6 +148,69 @@ authRouter.get('/google/callback', async (req, res) => {
 })
 
 const cookieOpts = { httpOnly: true, sameSite: 'lax' as const, secure: false, maxAge: 30 * 864e5, path: '/' }
+
+/* ------------------------------------------------------------------ Masuk dengan AgentBuff */
+
+const AB_COOKIE = 'absentra_abmasuk'
+
+/** Upsert the OWNER from a verified AgentBuff identity + claim pending invites. */
+function upsertAgentBuffUser(p: { sub: string; email: string; name: string | null; picture: string | null }) {
+  let user = db.prepare('SELECT * FROM user WHERE agentbuff_sub = ?').get(p.sub) as any
+  if (!user) user = db.prepare('SELECT * FROM user WHERE email = ?').get(p.email) as any
+  if (!user) {
+    const uid = id('usr')
+    db.prepare('INSERT INTO user (id, google_sub, email, name, avatar_url, created_at, agentbuff_sub) VALUES (?,?,?,?,?,?,?)')
+      .run(uid, null, p.email, p.name ?? p.email.split('@')[0], p.picture, now(), p.sub)
+    user = db.prepare('SELECT * FROM user WHERE id = ?').get(uid)
+  } else {
+    // The same email already linked to a DIFFERENT AgentBuff identity = refuse
+    // rather than merge two people.
+    if (user.agentbuff_sub && user.agentbuff_sub !== p.sub) throw new Error('akun_lain')
+    db.prepare('UPDATE user SET agentbuff_sub = ?, avatar_url = COALESCE(avatar_url, ?) WHERE id = ?').run(p.sub, p.picture, user.id)
+  }
+  db.prepare(`UPDATE membership SET user_id = ?, status = 'active' WHERE user_id = ?`).run(user.id, `pending:${p.email}`)
+  db.prepare('UPDATE employee_profile SET user_id = ? WHERE email = ? AND (user_id IS NULL OR user_id = ?)').run(user.id, p.email, `pending:${p.email}`)
+  return user
+}
+
+authRouter.get('/agentbuff/start', (req, res) => {
+  if (!config.agentbuffEnabled) return res.status(503).json({ error: 'agentbuff_not_configured' })
+  const b = bahanBaru()
+  const next = safeNextPath(req.query.next)
+  res.cookie(AB_COOKIE, JSON.stringify({ s: b.state, n: b.nonce, v: b.verifier, nx: next }), {
+    httpOnly: true, sameSite: 'lax', secure: config.appOrigin.startsWith('https://'), maxAge: 600_000, path: '/api/auth',
+  })
+  res.redirect(urlOtorisasi(b, config.agentbuffRedirectUri, req.query.ganti === '1'))
+})
+
+authRouter.get('/agentbuff/callback', async (req, res) => {
+  const gagal = (kode: string) => res.redirect(`${config.appOrigin}/login?error=${encodeURIComponent(kode)}`)
+  try {
+    if (!config.agentbuffEnabled) return gagal('agentbuff')
+    const raw = req.cookies?.[AB_COOKIE]
+    res.clearCookie(AB_COOKIE, { path: '/api/auth' })
+    // AgentBuff sent the owner back without a code (not entitled / cancelled):
+    // error_description carries the reason (belum_beli, akses_berakhir, ...).
+    if (typeof req.query.error === 'string') return gagal(String(req.query.error_description ?? req.query.error))
+    let b: { s?: string; n?: string; v?: string; nx?: string | null } | null = null
+    try { b = raw ? JSON.parse(String(raw)) : null } catch { b = null }
+    const code = String(req.query.code ?? '')
+    const state = String(req.query.state ?? '')
+    if (!b?.s || !b.n || !b.v || !code || state !== b.s) return gagal('state')
+
+    const akun = await tukarKode(code, b.v, b.n, config.agentbuffRedirectUri)
+    const user = upsertAgentBuffUser(akun)
+    forgetOwner(user.id) // a just-renewed owner must not wait for the freeze cache
+    const memberships = membershipsForUser(user.id)
+    const companyId = memberships[0]?.company.id ?? null
+    const sid = createSession(user.id, companyId)
+    res.cookie(SESSION_COOKIE, sid, cookieOpts)
+    issueRefresh(res, user.id, companyId)
+    res.redirect(`${config.appOrigin}${safeNextPath(b.nx) ?? '/'}`)
+  } catch (e) {
+    return gagal(e instanceof Error && e.message === 'akun_lain' ? 'akun_lain' : 'oauth')
+  }
+})
 
 function membershipsForUser(userId: string) {
   const rows = db.prepare(`SELECT * FROM membership WHERE user_id = ? AND status != 'disabled'`).all(userId) as any[]

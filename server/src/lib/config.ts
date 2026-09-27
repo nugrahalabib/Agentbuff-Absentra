@@ -29,6 +29,9 @@ export const config = {
   passwordAuthAllowlist: parseAllowlist(process.env.PASSWORD_AUTH_ALLOWLIST),
   get googleEnabled() { return !!(this.googleClientId && this.googleClientSecret) },
   get googleRedirectUri() { return process.env.GOOGLE_REDIRECT_URI ?? `${this.appOrigin}/api/auth/google/callback` },
+  /** "Masuk dengan AgentBuff" (pemilik). Aktif begitu AGENTBUFF_MASUK_CLIENT_ID + SECRET diisi. */
+  get agentbuffEnabled() { return !!(process.env.AGENTBUFF_MASUK_CLIENT_ID && process.env.AGENTBUFF_MASUK_CLIENT_SECRET) },
+  get agentbuffRedirectUri() { return `${this.appOrigin}/api/auth/agentbuff/callback` },
   get passwordAuthEnabled() { return this.passwordAuthAllowlist.length > 0 },
   isPasswordAllowed(email: string) {
     // '*' = allow all (tests / local emergency). Production should list explicit emails.

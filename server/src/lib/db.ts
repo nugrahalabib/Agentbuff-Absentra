@@ -288,9 +288,12 @@ for (const stmt of [
   'ALTER TABLE mcp_connection ADD COLUMN token_hash TEXT',
   'ALTER TABLE policy ADD COLUMN min_rest_hours INTEGER NOT NULL DEFAULT 0',
   'ALTER TABLE user ADD COLUMN password_hash TEXT',
+  // "Masuk dengan AgentBuff": identitas pemilik dari AgentBuff (sub pairwise, tetap selamanya).
+  'ALTER TABLE user ADD COLUMN agentbuff_sub TEXT',
 ]) {
   try { db.exec(stmt) } catch { /* column already exists */ }
 }
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS user_agentbuff_sub_uq ON user (agentbuff_sub)')
 
 export function now(): string {
   return new Date().toISOString()

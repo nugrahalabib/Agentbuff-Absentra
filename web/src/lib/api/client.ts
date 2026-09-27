@@ -85,7 +85,7 @@ class Api {
   online = true
 
   // ---- Auth ----
-  authConfig() { return req<{ googleEnabled: boolean; passwordAuthEnabled: boolean }>('/auth/config') }
+  authConfig() { return req<{ googleEnabled: boolean; passwordAuthEnabled: boolean; agentbuffEnabled?: boolean }>('/auth/config') }
   signin(email: string, name?: string, register = true, password?: string) { return post<MeResponse>('/auth/signin', { email, name, register, password }) }
   uploadProfilePhoto(photoData: string) { return post<{ ok: true }>('/me/profile-photo', { photoData }) }
   changePassword(newPassword: string, currentPassword?: string) { return post<{ ok: true; hadPassword: boolean }>('/auth/change-password', { newPassword, currentPassword }) }
