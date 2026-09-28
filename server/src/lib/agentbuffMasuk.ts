@@ -113,6 +113,43 @@ export async function tukarKode(code: string, verifier: string, nonce: string, r
   }
 }
 
+export interface AssertionMcp {
+  sub: string
+  /** Hanya terisi bila AgentBuff menyatakan `email_verified: true`. */
+  email: string | null
+  jti: string
+}
+
+/**
+ * Verifikasi assertion "Sambung MCP otomatis" (server AgentBuff → aplikasi).
+ * Kunci yang sama dengan id_token (JWKS AgentBuff), tetapi WAJIB bertipe
+ * `mcp-token+jwt` dan berklaim `purpose: "mcp_token"` — id_token biasa ditolak.
+ * `null` = tidak sah (alasannya sengaja tidak dibedakan ke pemanggil).
+ * Anti-putar-ulang jti ditangani pemanggil.
+ */
+export async function verifikasiAssertionMcp(assertion: string): Promise<AssertionMcp | null> {
+  if (!CLIENT_ID || !assertion) return null
+  try {
+    const { payload, protectedHeader } = await jwtVerify(assertion, JWKS, {
+      issuer: ISSUER,
+      audience: CLIENT_ID,
+      algorithms: ['ES256'],
+      typ: 'mcp-token+jwt',
+      maxTokenAge: '180s',
+      clockTolerance: 60,
+      requiredClaims: ['iat', 'exp', 'jti', 'sub'],
+    })
+    const k = payload as JWTPayload & Record<string, unknown>
+    if (typeof protectedHeader.kid !== 'string' || !protectedHeader.kid) return null
+    if (k.purpose !== 'mcp_token') return null
+    if (typeof k.sub !== 'string' || !k.sub || typeof k.jti !== 'string' || !k.jti) return null
+    const email = k.email_verified === true && typeof k.email === 'string' && k.email.trim() ? k.email.trim().toLowerCase() : null
+    return { sub: k.sub, email, jti: k.jti }
+  } catch {
+    return null
+  }
+}
+
 export interface StatusPemilik {
   aktif: boolean
   alasan: string

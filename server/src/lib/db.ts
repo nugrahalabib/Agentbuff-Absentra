@@ -290,6 +290,9 @@ for (const stmt of [
   'ALTER TABLE user ADD COLUMN password_hash TEXT',
   // "Masuk dengan AgentBuff": identitas pemilik dari AgentBuff (sub pairwise, tetap selamanya).
   'ALTER TABLE user ADD COLUMN agentbuff_sub TEXT',
+  // Siapa yang menerbitkan koneksi MCP (user id) — dipakai sambung otomatis
+  // AgentBuff untuk mencabut token otomatis lama milik pemilik yang sama.
+  'ALTER TABLE mcp_connection ADD COLUMN created_by TEXT',
 ]) {
   try { db.exec(stmt) } catch { /* column already exists */ }
 }

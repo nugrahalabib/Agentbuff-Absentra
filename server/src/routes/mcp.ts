@@ -1,14 +1,13 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { createHash } from 'node:crypto'
-import { db, now } from '../lib/db.js'
-import { id, token } from '../lib/ids.js'
+import { db } from '../lib/db.js'
 import { mapMcp } from '../lib/map.js'
 import { requireCompany, requireCap } from '../lib/context.js'
 import { audit } from '../lib/audit.js'
+import { terbitkanKoneksiMcp } from '../lib/mcpKoneksi.js'
 
 export const mcpRouter = Router()
-export const sha256 = (s: string) => createHash('sha256').update(s).digest('hex')
+export { sha256 } from '../lib/mcpKoneksi.js'
 
 mcpRouter.get('/mcp/connections', requireCompany, requireCap('mcp.connection.manage'), (req, res) => {
   const rows = db.prepare('SELECT * FROM mcp_connection WHERE company_id=? ORDER BY created_at DESC').all(req.ctx!.companyId) as any[]
@@ -23,13 +22,11 @@ mcpRouter.post('/mcp/connections', requireCompany, requireCap('mcp.connection.ma
     scopeBranchIds: z.array(z.string()).default([]),
   }).parse(req.body)
   const cid = req.ctx!.companyId!
-  const mid = id('mcp')
   // Issue an OAuth-style bearer token bound to this company_id + scope subset (PRD §7.5.3).
   // Shown once; only its hash is stored.
-  const accessToken = `mcp_${token()}${token()}`
-  db.prepare(`INSERT INTO mcp_connection (id, company_id, agent_name, oauth_client_id, scopes, scope_branch_ids, status, created_at, token_hash) VALUES (?,?,?,?,?,?, 'active', ?, ?)`).run(
-    mid, cid, body.agentName, `cli_${id('')}`.slice(0, 16), JSON.stringify(body.scopes), JSON.stringify(body.scopeBranchIds), now(), sha256(accessToken),
-  )
+  const { id: mid, accessToken } = terbitkanKoneksiMcp({
+    companyId: cid, agentName: body.agentName, scopes: body.scopes, scopeBranchIds: body.scopeBranchIds, createdBy: req.ctx!.userId,
+  })
   audit({ companyId: cid, actorType: 'user', actorId: req.ctx!.userId, action: 'mcp.connection.create', target: mid, metadata: { scopes: body.scopes } })
   res.json({ ...mapMcp(db.prepare('SELECT * FROM mcp_connection WHERE id=?').get(mid)), accessToken })
 })

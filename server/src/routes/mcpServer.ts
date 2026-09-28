@@ -25,7 +25,7 @@ import { config } from '../lib/config.js'
 import { can, type Actor, type Capability } from '../domain/rbac.js'
 import { computeRecapRow, type OvertimeBlock } from '../domain/payroll.js'
 import { mapPolicy } from '../lib/map.js'
-import { sha256 } from './mcp.js'
+import { sha256 } from '../lib/mcpKoneksi.js'
 import { companyOpen } from '../lib/agentbuffGate.js'
 
 export const mcpServerRouter = Router()
@@ -179,15 +179,8 @@ function resolveOne(cid: string, table: 'employee_profile' | 'branch' | 'divisio
 }
 
 // ---- scope catalog (least-privilege; owners grant a subset per connection) ----
-const SCOPES = [
-  'attendance:read', 'attendance:write',
-  'shift:read', 'shift:write',
-  'employee:read', 'employee:write',
-  'org:read', 'org:write',
-  'policy:read', 'policy:write',
-  'request:read', 'request:write',
-  'payroll:read', 'audit:read',
-]
+// Lives in lib/mcpKoneksi.ts (MCP_SCOPES) so connection issuance (UI + AgentBuff
+// auto-connect) shares one list. Every tool's `scope` below must be in it.
 
 interface ToolCtx { args: any; cid: string; conn: Conn; actor: Actor; auditCall: (action: string, meta?: any) => void; confirmOr: (summary: string, fn: () => any) => any }
 interface Tool { name: string; description: string; scope: string; capability: Capability; write: boolean; schema: z.ZodTypeAny; run: (c: ToolCtx) => any }
@@ -613,6 +606,9 @@ const TOOLS: Tool[] = [
       return { filename: `payroll-${args.periodStart}-${args.periodEnd}.csv`, mimeType: 'text/csv', rowCount: rows.length, csv }
     } },
 ]
+
+/** Distinct scopes the tools require (tests assert they are all in MCP_SCOPES). */
+export const toolScopes = (): string[] => [...new Set(TOOLS.map((t) => t.scope))]
 
 // ---- Resources (read-only, tenant-scoped) ----
 function readResource(uri: string, conn: Conn): { ok: any } | { err: [number, string] } {

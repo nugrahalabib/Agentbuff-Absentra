@@ -16,6 +16,7 @@ import { mcpRouter } from './routes/mcp.js'
 import { mcpServerRouter } from './routes/mcpServer.js'
 import { ssoRouter } from './routes/sso.js'
 import { auditRouter } from './routes/audit.js'
+import { agentbuffMcpRouter } from './routes/agentbuffMcp.js'
 
 export function createApp() {
   const app = express()
@@ -36,6 +37,7 @@ export function createApp() {
   app.use('/api', mcpRouter)
   app.use('/api', ssoRouter)
   app.use('/api', auditRouter)
+  app.use('/api', agentbuffMcpRouter) // server-to-server dari AgentBuff (Bearer assertion, tanpa sesi)
   app.use('/mcp', mcpServerRouter) // MCP JSON-RPC single endpoint (PRD §7.5.2)
 
   // Single-origin deploy: when WEB_DIST is set (production container), the same

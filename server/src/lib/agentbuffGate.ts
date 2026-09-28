@@ -109,6 +109,17 @@ async function checkOwner(owner: Owner): Promise<Entitlement> {
   return { entitled: false, reason: 'gate_unreachable' }
 }
 
+/**
+ * Entitlement of one OWNER right now (AgentBuff auto-connect MCP). Same cache +
+ * outage grace as the company freeze — the AgentBuff contract allows caching.
+ */
+export async function ownerEntitlement(userId: string): Promise<Entitlement> {
+  if (!gateEnabled()) return { entitled: true, reason: 'gate_disabled' }
+  const u = db.prepare('SELECT id, email, agentbuff_sub FROM user WHERE id = ?').get(userId) as Owner | undefined
+  if (!u) return { entitled: false, reason: 'tidak_dikenal' }
+  return checkOwner(u)
+}
+
 /** Forget the cached verdict for a user (called right after they sign in again). */
 export function forgetOwner(userId: string): void {
   cache.delete(userId)
