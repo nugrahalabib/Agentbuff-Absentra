@@ -1,209 +1,168 @@
-import { useState, useMemo } from 'react'
+/** Laporan absensi: rapor per karyawan (siap cetak) atau daftar absen dengan saringan. */
+import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api/client'
 import { useActor } from '@/auth/useActor'
-import { Button, Card, Field, Input, Select, Skeleton, Badge } from '@/components/ui'
+import { Badge, Button, EmptyState, Field, Input, KepalaHalaman, PesanGalat, Segmen, Select, Skeleton } from '@/components/ui'
+import { AttendanceBadge } from '@/components/StatusBadge'
+import { Maskot } from '@/components/merek'
 import { IconDownload, IconReceipt } from '@/components/ui/icons'
 import { downloadCsv } from '@/lib/exporters'
-import { formatDate, formatTime, todayISODate } from '@/lib/format'
+import { awalBulan, formatDate, formatDateShort, formatTime, todayISODate } from '@/lib/format'
+import { pesanGalat } from '@/lib/galat'
 import { AttendanceDetailSheet } from '@/features/dashboard/AttendanceDetailSheet'
 import { EmployeeReportDocument, exportEmployeeReportCsv } from './EmployeeReportDocument'
 
-function firstOfMonth(iso: string) { return iso.slice(0, 8) + '01' }
-const statusLabel: Record<string, string> = { on_time: 'Tepat waktu', late: 'Terlambat', absent: 'Tidak hadir' }
+const STATUS: Record<string, string> = { on_time: 'Tepat waktu', late: 'Terlambat', absent: 'Tidak hadir' }
 
-/** Attendance list + per-employee periodic report (PRD §7.4.3). */
-export function LaporanPage() {
-  const [mode, setMode] = useState<'list' | 'employee'>('employee')
-
+export default function LaporanPage() {
+  const [mode, setMode] = useState<'karyawan' | 'daftar'>('karyawan')
   return (
     <div className="mx-auto max-w-6xl">
-      <h1 className="mb-1 text-xl font-bold text-text">Riwayat & Laporan Absensi</h1>
-      <p className="mb-4 text-sm text-text-muted">Laporan periodik per karyawan (absen, izin, cuti, lembur) atau daftar absensi mentah.</p>
-
-      <div className="mb-4 flex gap-1 rounded-lg border border-border bg-surface-elevated p-1 no-print" role="tablist">
-        <Tab active={mode === 'employee'} onClick={() => setMode('employee')}>Per karyawan</Tab>
-        <Tab active={mode === 'list'} onClick={() => setMode('list')}>Daftar absensi</Tab>
+      <div className="no-print flex items-end justify-between gap-3">
+        <KepalaHalaman judul="Laporan absensi" keterangan="Rapor per orang untuk dicetak, atau daftar semua absen." />
+        <Maskot pose="analisis" ukuran="kecil" className="-mb-1 hidden shrink-0 sm:block" />
       </div>
-
-      {mode === 'employee' ? <EmployeeReportPanel /> : <AttendanceListPanel />}
+      <Segmen label="Jenis laporan" nilai={mode} onChange={setMode} pilihan={[{ nilai: 'karyawan', label: 'Per karyawan' }, { nilai: 'daftar', label: 'Daftar absen' }]} className="no-print mb-5" />
+      {mode === 'karyawan' ? <PanelKaryawan /> : <PanelDaftar />}
     </div>
   )
 }
 
-function Tab({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={active}
-      onClick={onClick}
-      className={`min-h-touch flex-1 rounded-md px-3 text-sm font-medium transition-colors ${active ? 'bg-primary text-on-primary' : 'text-text-muted hover:bg-surface hover:text-text'}`}
-    >
-      {children}
-    </button>
-  )
-}
-
-function EmployeeReportPanel() {
-  const today = todayISODate()
-  const [from, setFrom] = useState(firstOfMonth(today))
-  const [to, setTo] = useState(today)
-  const [employeeId, setEmployeeId] = useState('')
-  const [run, setRun] = useState(0)
-
+function PanelKaryawan() {
+  const hariIni = todayISODate()
+  const [dari, setDari] = useState(awalBulan(hariIni))
+  const [sampai, setSampai] = useState(hariIni)
+  const [orang, setOrang] = useState('')
+  const [jalan, setJalan] = useState(0)
   const empQ = useQuery({ queryKey: ['employees'], queryFn: () => api.employees() })
-  const reportQ = useQuery({
-    queryKey: ['employeeReport', employeeId, from, to, run],
-    enabled: run > 0 && !!employeeId,
-    queryFn: () => api.employeeReport(employeeId, from, to),
-  })
+  const rapor = useQuery({ queryKey: ['employeeReport', orang, dari, sampai, jalan], enabled: jalan > 0 && !!orang, queryFn: () => api.employeeReport(orang, dari, sampai) })
 
-  const exportCsv = () => {
-    if (!reportQ.data) return
-    const { summaryHeader, summaryRow, detailHeader, detailRows } = exportEmployeeReportCsv(reportQ.data)
-    const name = reportQ.data.employee.name.replace(/\s+/g, '-')
-    downloadCsv(`ringkasan-${name}-${from}-${to}.csv`, summaryHeader, [summaryRow])
-    downloadCsv(`detail-${name}-${from}-${to}.csv`, detailHeader, detailRows)
+  const unduh = () => {
+    if (!rapor.data) return
+    const { summaryHeader, summaryRow, detailHeader, detailRows } = exportEmployeeReportCsv(rapor.data)
+    const n = rapor.data.employee.name.replace(/\s+/g, '-')
+    downloadCsv(`ringkasan-${n}-${dari}-${sampai}.csv`, summaryHeader, [summaryRow])
+    downloadCsv(`detail-${n}-${dari}-${sampai}.csv`, detailHeader, detailRows)
   }
 
   return (
     <>
-      <Card className="mb-4 no-print">
-        <div className="grid w-full grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-12">
-          <div className="min-w-0 sm:col-span-2 lg:col-span-4">
-            <Field label="Karyawan">
-              <Select value={employeeId} onChange={(e) => setEmployeeId((e.target as HTMLSelectElement).value)}>
-                <option value="">Pilih karyawan…</option>
-                {(empQ.data ?? []).map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-              </Select>
-            </Field>
-          </div>
-          <div className="min-w-0 lg:col-span-2">
-            <Field label="Dari"><Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
-          </div>
-          <div className="min-w-0 lg:col-span-2">
-            <Field label="Sampai"><Input type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} /></Field>
-          </div>
-          <div className="flex flex-wrap gap-2 sm:col-span-2 lg:col-span-4">
-            <Button disabled={!employeeId} onClick={() => setRun((r) => r + 1)}><IconReceipt width={18} height={18} /> Tampilkan</Button>
-            {reportQ.data && <>
-              <Button variant="secondary" onClick={exportCsv}><IconDownload width={16} height={16} /> CSV</Button>
-              <Button variant="secondary" onClick={() => window.print()}>Cetak PDF</Button>
-            </>}
-          </div>
+      <div className="kaca-panel no-print mb-5 grid gap-3 rounded-[24px] p-4 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr_auto] lg:items-end">
+        <Field label="Karyawan">
+          <Select value={orang} onChange={(e) => setOrang(e.target.value)}>
+            <option value="">Pilih karyawan</option>
+            {(empQ.data ?? []).map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+          </Select>
+        </Field>
+        <Field label="Dari"><Input type="date" value={dari} onChange={(e) => setDari(e.target.value)} /></Field>
+        <Field label="Sampai"><Input type="date" value={sampai} min={dari} onChange={(e) => setSampai(e.target.value)} /></Field>
+        <Button disabled={!orang} onClick={() => setJalan((r) => r + 1)}><IconReceipt width={18} height={18} /> Tampilkan</Button>
+      </div>
+      {rapor.data && (
+        <div className="no-print mb-4 flex flex-wrap gap-2">
+          <Button variant="secondary" size="sm" onClick={unduh}><IconDownload width={16} height={16} /> Unduh CSV</Button>
+          <Button variant="secondary" size="sm" onClick={() => window.print()}>Cetak / simpan PDF</Button>
         </div>
-      </Card>
-
-      {run === 0 ? (
-        <p className="text-sm text-text-muted">Pilih karyawan dan periode, lalu klik Tampilkan.</p>
-      ) : reportQ.isLoading ? (
-        <Skeleton className="h-64" />
-      ) : reportQ.data ? (
-        <EmployeeReportDocument report={reportQ.data} />
-      ) : (
-        <p className="text-sm text-danger">Gagal memuat laporan.</p>
       )}
+      {jalan === 0 ? (
+        <EmptyState pose="analisis" title="Pilih karyawan dan periodenya" keterangan="Rapornya berisi hadir, telat, cuti, lembur, dan detail harian. Bisa dicetak atau disimpan jadi PDF." />
+      ) : rapor.isLoading ? (
+        <Skeleton className="h-72" />
+      ) : rapor.isError ? (
+        <PesanGalat>{pesanGalat(rapor.error)}</PesanGalat>
+      ) : rapor.data ? (
+        <EmployeeReportDocument report={rapor.data} />
+      ) : null}
     </>
   )
 }
 
-function AttendanceListPanel() {
+function PanelDaftar() {
   const { company, scopeBranchIds } = useActor()
-  const today = todayISODate()
-  const [from, setFrom] = useState(firstOfMonth(today))
-  const [to, setTo] = useState(today)
-  const [branch, setBranch] = useState('')
-  const [division, setDivision] = useState('')
-  const [employee, setEmployee] = useState('')
-  const [run, setRun] = useState(0)
-  const [openId, setOpenId] = useState<string | null>(null)
+  const hariIni = todayISODate()
+  const [dari, setDari] = useState(awalBulan(hariIni))
+  const [sampai, setSampai] = useState(hariIni)
+  const [cabang, setCabang] = useState('')
+  const [divisi, setDivisi] = useState('')
+  const [orang, setOrang] = useState('')
+  const [jalan, setJalan] = useState(0)
+  const [buka, setBuka] = useState<string | null>(null)
 
-  const branchesQ = useQuery({ queryKey: ['branches'], queryFn: () => api.branches() })
+  const cabangQ = useQuery({ queryKey: ['branches'], queryFn: () => api.branches() })
   const divQ = useQuery({ queryKey: ['divisions'], queryFn: () => api.divisions() })
   const empQ = useQuery({ queryKey: ['employees'], queryFn: () => api.employees() })
-  const branchId = branch || (scopeBranchIds.length === 1 ? scopeBranchIds[0] : undefined)
-  const q = useQuery({ queryKey: ['attlist', from, to, branchId, run], enabled: run > 0, queryFn: () => api.attendanceList(from, to, branchId) })
+  const branchId = cabang || (scopeBranchIds.length === 1 ? scopeBranchIds[0] : undefined)
+  const q = useQuery({ queryKey: ['attlist', dari, sampai, branchId, jalan], enabled: jalan > 0, queryFn: () => api.attendanceList(dari, sampai, branchId) })
 
-  const empMap = useMemo(() => new Map((empQ.data ?? []).map((e) => [e.id, e])), [empQ.data])
-  const rows = (q.data ?? []).filter((r) => {
-    if (employee && r.employeeId !== employee) return false
-    if (division && empMap.get(r.employeeId)?.divisionId !== division) return false
-    return true
-  })
-  const empOptions = (empQ.data ?? []).filter((e) => (!branchId || e.branchId === branchId) && (!division || e.divisionId === division))
+  const petaOrang = useMemo(() => new Map((empQ.data ?? []).map((e) => [e.id, e])), [empQ.data])
+  const baris = (q.data ?? []).filter((r) => (!orang || r.employeeId === orang) && (!divisi || petaOrang.get(r.employeeId)?.divisionId === divisi))
+  const pilihanOrang = (empQ.data ?? []).filter((e) => (!branchId || e.branchId === branchId) && (!divisi || e.divisionId === divisi))
 
-  const exportCsv = () => downloadCsv(`absensi-${from}-${to}.csv`,
-    ['Nama', 'Cabang', 'Tanggal', 'Masuk', 'Keluar', 'Status', 'Telat(menit)', 'Trust', 'PulangCepat'],
-    rows.map((r) => [r.name, r.branchName, r.workDate, r.clockInAt ? formatTime(r.clockInAt) : '', r.clockOutAt ? formatTime(r.clockOutAt) : '', statusLabel[r.status] ?? r.status, r.lateMinutes, r.trustScore, r.leftEarly ? 'Ya' : '']))
+  const unduh = () =>
+    downloadCsv(
+      `absensi-${dari}-${sampai}.csv`,
+      ['Nama', 'Lokasi', 'Tanggal', 'Masuk', 'Keluar', 'Status', 'MenitTelat', 'Skor', 'PulangCepat'],
+      baris.map((r) => [r.name, r.branchName, r.workDate, r.clockInAt ? formatTime(r.clockInAt) : '', r.clockOutAt ? formatTime(r.clockOutAt) : '', STATUS[r.status] ?? r.status, r.lateMinutes, r.trustScore, r.leftEarly ? 'Ya' : '']),
+    )
 
   return (
     <>
-      <Card className="mb-4 no-print">
-        <div className="grid w-full grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-12">
-          <div className="min-w-0 lg:col-span-2">
-            <Field label="Dari"><Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
-          </div>
-          <div className="min-w-0 lg:col-span-2">
-            <Field label="Sampai"><Input type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} /></Field>
-          </div>
-          {scopeBranchIds.length !== 1 && (
-            <div className="min-w-0 lg:col-span-2">
-              <Field label="Cabang"><Select value={branch} onChange={(e) => { setBranch((e.target as HTMLSelectElement).value); setEmployee('') }}><option value="">Semua</option>{branchesQ.data?.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</Select></Field>
-            </div>
-          )}
-          <div className="min-w-0 lg:col-span-2">
-            <Field label="Divisi"><Select value={division} onChange={(e) => { setDivision((e.target as HTMLSelectElement).value); setEmployee('') }}><option value="">Semua</option>{divQ.data?.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select></Field>
-          </div>
-          <div className="min-w-0 lg:col-span-2">
-            <Field label="Karyawan"><Select value={employee} onChange={(e) => setEmployee((e.target as HTMLSelectElement).value)}><option value="">Semua</option>{empOptions.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</Select></Field>
-          </div>
-          <div className="flex flex-wrap gap-2 sm:col-span-2 lg:col-span-2">
-            <Button onClick={() => setRun((r) => r + 1)}><IconReceipt width={18} height={18} /> Tampilkan</Button>
-            {rows.length > 0 && <>
-              <Button variant="secondary" onClick={exportCsv}><IconDownload width={16} height={16} /> CSV</Button>
-              <Button variant="secondary" onClick={() => window.print()}>Cetak PDF</Button>
-            </>}
-          </div>
+      <div className="kaca-panel no-print mb-5 grid gap-3 rounded-[24px] p-4 sm:grid-cols-2 lg:grid-cols-6 lg:items-end">
+        <Field label="Dari"><Input type="date" value={dari} onChange={(e) => setDari(e.target.value)} /></Field>
+        <Field label="Sampai"><Input type="date" value={sampai} min={dari} onChange={(e) => setSampai(e.target.value)} /></Field>
+        {scopeBranchIds.length !== 1 && (
+          <Field label="Lokasi"><Select value={cabang} onChange={(e) => { setCabang(e.target.value); setOrang('') }}><option value="">Semua</option>{cabangQ.data?.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</Select></Field>
+        )}
+        <Field label="Divisi"><Select value={divisi} onChange={(e) => { setDivisi(e.target.value); setOrang('') }}><option value="">Semua</option>{divQ.data?.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select></Field>
+        <Field label="Karyawan"><Select value={orang} onChange={(e) => setOrang(e.target.value)}><option value="">Semua</option>{pilihanOrang.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</Select></Field>
+        <Button onClick={() => setJalan((r) => r + 1)}><IconReceipt width={18} height={18} /> Tampilkan</Button>
+      </div>
+      {baris.length > 0 && (
+        <div className="no-print mb-4 flex flex-wrap gap-2">
+          <Button variant="secondary" size="sm" onClick={unduh}><IconDownload width={16} height={16} /> Unduh CSV</Button>
+          <Button variant="secondary" size="sm" onClick={() => window.print()}>Cetak / simpan PDF</Button>
         </div>
-      </Card>
-
-      {run === 0 ? (
-        <p className="text-sm text-text-muted">Pilih filter lalu klik Tampilkan.</p>
+      )}
+      {jalan === 0 ? (
+        <EmptyState pose="analisis" title="Atur saringannya, lalu tampilkan" keterangan="Ketuk satu baris untuk melihat foto dan lokasi absennya." />
       ) : q.isLoading ? (
-        <Skeleton className="h-40" />
-      ) : rows.length > 0 ? (
-        <div className="print-area overflow-x-auto rounded-lg border border-border">
-          <div className="print-only mb-3">
-            <h2 className="text-lg font-bold">Riwayat Absensi · {company?.displayName ?? ''}</h2>
-            <p className="text-sm">Periode {formatDate(from + 'T00:00:00')} – {formatDate(to + 'T00:00:00')}</p>
+        <Skeleton className="h-48" />
+      ) : q.isError ? (
+        <PesanGalat>{pesanGalat(q.error)}</PesanGalat>
+      ) : baris.length === 0 ? (
+        <p className="py-8 text-center text-[15px] text-tinta-3">Tidak ada absen untuk saringan ini.</p>
+      ) : (
+        <div className="print-area kaca-panel overflow-x-auto rounded-[24px]">
+          <div className="print-only mb-3 p-3">
+            <h2 className="text-lg font-bold">Daftar absen · {company?.displayName ?? ''}</h2>
+            <p className="text-sm">Periode {formatDate(dari)} sampai {formatDate(sampai)}</p>
           </div>
-          <table className="w-full min-w-[760px] text-sm">
-            <thead className="bg-surface text-left text-text-muted">
-              <tr><th className="p-2">Nama</th><th className="p-2">Cabang</th><th className="p-2">Tanggal</th><th className="p-2">Masuk</th><th className="p-2">Keluar</th><th className="p-2">Status</th><th className="p-2 text-right">Telat</th><th className="p-2 text-right">Trust</th><th className="p-2 no-print"></th></tr>
+          <table className="w-full min-w-[760px] text-[14px]">
+            <thead className="text-left text-tinta-3">
+              <tr>
+                <th className="p-3 font-medium">Nama</th><th className="p-3 font-medium">Lokasi</th><th className="p-3 font-medium">Tanggal</th>
+                <th className="p-3 font-medium">Masuk</th><th className="p-3 font-medium">Keluar</th><th className="p-3 font-medium">Status</th>
+                <th className="p-3 text-right font-medium">Telat</th>
+              </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} className="cursor-pointer border-t border-border hover:bg-surface/60" onClick={() => setOpenId(r.id)}>
-                  <td className="p-2 font-medium text-text">{r.name}</td>
-                  <td className="p-2 text-text-muted">{r.branchName}</td>
-                  <td className="p-2 text-text-muted">{r.workDate}</td>
-                  <td className="p-2">{r.clockInAt ? formatTime(r.clockInAt) : '—'}</td>
-                  <td className="p-2">{r.clockOutAt ? formatTime(r.clockOutAt) : '—'} {r.leftEarly && <Badge tone="warning">cepat</Badge>}</td>
-                  <td className="p-2">{statusLabel[r.status] ?? r.status}</td>
-                  <td className="p-2 text-right tabular-nums">{r.lateMinutes || '—'}</td>
-                  <td className="p-2 text-right tabular-nums">{r.trustScore}</td>
-                  <td className="p-2 text-right text-xs text-accent no-print">Foto →</td>
+              {baris.map((r) => (
+                <tr key={r.id} className="cursor-pointer border-t border-garis hover:bg-sumur" onClick={() => setBuka(r.id)}>
+                  <td className="p-3 font-semibold text-tinta">{r.name}</td>
+                  <td className="p-3 text-tinta-2">{r.branchName}</td>
+                  <td className="p-3 tabular-nums text-tinta-2">{formatDateShort(r.workDate)}</td>
+                  <td className="p-3 tabular-nums text-tinta">{r.clockInAt ? formatTime(r.clockInAt) : '-'}</td>
+                  <td className="p-3 tabular-nums text-tinta">{r.clockOutAt ? formatTime(r.clockOutAt) : '-'} {r.leftEarly && <Badge tone="warning">cepat</Badge>}</td>
+                  <td className="p-3"><AttendanceBadge status={r.status} trustScore={r.trustScore} /></td>
+                  <td className="p-3 text-right tabular-nums text-tinta-2">{r.lateMinutes ? `${r.lateMinutes} mnt` : '-'}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      ) : (
-        <p className="text-sm text-text-muted">Tidak ada data pada filter ini.</p>
       )}
-
-      <AttendanceDetailSheet recordId={openId} onClose={() => setOpenId(null)} />
+      <AttendanceDetailSheet recordId={buka} onClose={() => setBuka(null)} />
     </>
   )
 }

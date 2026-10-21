@@ -3,12 +3,13 @@
 import { useQuery } from '@tanstack/react-query'
 import { api, ApiError } from '@/lib/api/client'
 import type { Actor } from '@/lib/domain/rbac'
+import { setZonaWaktu } from '@/lib/format'
 
 export function useActor() {
   const query = useQuery({
     queryKey: ['me'],
     retry: false,
-    staleTime: 10_000,
+    staleTime: 30_000,
     queryFn: async () => {
       try {
         return await api.me()
@@ -25,6 +26,8 @@ export function useActor() {
   const company = active?.company ?? null
   const employeeId = me?.employeeId ?? null
   const actor: Actor | null = membership ? { membership, employeeId: employeeId ?? undefined } : null
+  setZonaWaktu(company?.timezone)
+  api.setPemilikAntrean(me?.user?.id && company?.id ? `${me.user.id}:${company.id}` : null)
 
   return {
     ...query,
@@ -41,5 +44,8 @@ export function useActor() {
     scopeBranchIds: membership?.scopeBranchIds ?? [],
     hasPassword: me?.hasPassword ?? false,
     passwordAuthAllowed: me?.passwordAuthAllowed ?? false,
+    /** undefined = server lama yang belum mengirim info persetujuan (anggap sudah). */
+    consentLocation: me?.consentLocation,
+    consentPhoto: me?.consentPhoto,
   }
 }

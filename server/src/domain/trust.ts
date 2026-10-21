@@ -14,6 +14,8 @@ export interface TrustSignals {
   deviceConsistent: boolean // same device fingerprint as usual
   livenessPassed: boolean | null // null = not prompted
   withinShiftWindow: boolean // event time near the shift window
+  submittedOffline?: boolean // queued offline, delivered late (real event time is client-reported)
+  photoMissing?: boolean // employee consented to photos but this event carries none (camera off/denied)
 }
 
 export interface TrustResult {
@@ -30,16 +32,18 @@ export function computeTrustScore(s: TrustSignals): TrustResult {
     reasons.push(reason)
   }
 
-  if (s.geofenceResult === 'near') deduct(10, 'Berada di tepi area (near geofence)')
-  if (s.geofenceResult === 'outside') deduct(35, 'Di luar area kerja (outside geofence)')
+  if (s.geofenceResult === 'near') deduct(10, 'Absen di tepi lokasi kerja')
+  if (s.geofenceResult === 'outside') deduct(35, 'Absen di luar lokasi kerja')
 
-  if (s.gpsAccuracyM > 100) deduct(15, 'Akurasi GPS rendah (kemungkinan bukan GPS)')
+  if (s.gpsAccuracyM > 100) deduct(15, 'Sinyal GPS lemah')
 
   if (!s.ipGeoConsistent) deduct(15, 'Lokasi GPS tidak cocok dengan lokasi jaringan')
-  if (s.impossibleTravel) deduct(40, 'Perpindahan tidak masuk akal (impossible travel)')
-  if (!s.deviceConsistent) deduct(10, 'Perangkat berbeda dari biasanya')
-  if (s.livenessPassed === false) deduct(20, 'Verifikasi liveness gagal')
-  if (!s.withinShiftWindow) deduct(10, 'Waktu absen di luar jendela shift')
+  if (s.impossibleTravel) deduct(40, 'Pindah tempat terlalu cepat dari absen sebelumnya')
+  if (!s.deviceConsistent) deduct(10, 'HP berbeda dari biasanya')
+  if (s.livenessPassed === false) deduct(20, 'Foto tidak lolos pemeriksaan')
+  if (!s.withinShiftWindow) deduct(10, 'Absen jauh dari jam shift')
+  if (s.submittedOffline) deduct(5, 'Dikirim belakangan (sinyal hilang)')
+  if (s.photoMissing) deduct(15, 'Absen tanpa foto')
 
   return { score: Math.max(0, Math.min(100, Math.round(score))), reasons }
 }

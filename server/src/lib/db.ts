@@ -274,29 +274,62 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS ix_audit_company ON audit_log (company_id, created_at);
 `)
 
-// Lightweight migrations for existing databases (SQLite has no "ADD COLUMN IF NOT EXISTS").
-for (const stmt of [
-  'ALTER TABLE attendance_record ADD COLUMN left_early INTEGER NOT NULL DEFAULT 0',
-  'ALTER TABLE employee_profile ADD COLUMN photo_data TEXT',
-  'ALTER TABLE employee_profile ADD COLUMN leave_balance_annual INTEGER NOT NULL DEFAULT 12',
-  'ALTER TABLE attendance_event ADD COLUMN late_submitted INTEGER NOT NULL DEFAULT 0',
-  'ALTER TABLE attendance_record ADD COLUMN clock_out_at TEXT',
-  'ALTER TABLE leave_request ADD COLUMN attachment_name TEXT',
-  'ALTER TABLE leave_request ADD COLUMN decided_reason TEXT',
-  'ALTER TABLE overtime_request ADD COLUMN decided_reason TEXT',
-  'ALTER TABLE overtime_request ADD COLUMN is_draft INTEGER NOT NULL DEFAULT 0',
-  'ALTER TABLE mcp_connection ADD COLUMN token_hash TEXT',
-  'ALTER TABLE policy ADD COLUMN min_rest_hours INTEGER NOT NULL DEFAULT 0',
-  'ALTER TABLE user ADD COLUMN password_hash TEXT',
+// Additive, idempotent migrations for existing databases. SQLite has no
+// "ADD COLUMN IF NOT EXISTS", so each column is guarded by PRAGMA table_info.
+// Never destructive: production data is only ever extended.
+function addColumnIfMissing(table: string, column: string, ddl: string) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
+  if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`)
+}
+for (const [table, column, ddl] of [
+  ['attendance_record', 'left_early', 'INTEGER NOT NULL DEFAULT 0'],
+  ['employee_profile', 'photo_data', 'TEXT'],
+  ['employee_profile', 'leave_balance_annual', 'INTEGER NOT NULL DEFAULT 12'],
+  ['attendance_event', 'late_submitted', 'INTEGER NOT NULL DEFAULT 0'],
+  ['attendance_record', 'clock_out_at', 'TEXT'],
+  ['leave_request', 'attachment_name', 'TEXT'],
+  ['leave_request', 'decided_reason', 'TEXT'],
+  ['overtime_request', 'decided_reason', 'TEXT'],
+  ['overtime_request', 'is_draft', 'INTEGER NOT NULL DEFAULT 0'],
+  ['mcp_connection', 'token_hash', 'TEXT'],
+  ['policy', 'min_rest_hours', 'INTEGER NOT NULL DEFAULT 0'],
+  ['user', 'password_hash', 'TEXT'],
   // "Masuk dengan AgentBuff": identitas pemilik dari AgentBuff (sub pairwise, tetap selamanya).
-  'ALTER TABLE user ADD COLUMN agentbuff_sub TEXT',
+  ['user', 'agentbuff_sub', 'TEXT'],
   // Siapa yang menerbitkan koneksi MCP (user id) — dipakai sambung otomatis
   // AgentBuff untuk mencabut token otomatis lama milik pemilik yang sama.
-  'ALTER TABLE mcp_connection ADD COLUMN created_by TEXT',
-]) {
-  try { db.exec(stmt) } catch { /* column already exists */ }
-}
-db.exec('CREATE UNIQUE INDEX IF NOT EXISTS user_agentbuff_sub_uq ON user (agentbuff_sub)')
+  ['mcp_connection', 'created_by', 'TEXT'],
+  // Branch scope granted by an invite for hr/branch_admin (JSON array; NULL = invite's own branch).
+  ['invite', 'scope_branch_ids', 'TEXT'],
+  // Trust verdict stored per event so an idempotent retry returns the original result.
+  ['attendance_event', 'trust_score', 'INTEGER'],
+  ['attendance_event', 'trust_reasons', 'TEXT'],
+  ['attendance_event', 'decision', 'TEXT'],
+] as const) addColumnIfMissing(table, column, ddl)
+
+db.exec(`
+CREATE UNIQUE INDEX IF NOT EXISTS user_agentbuff_sub_uq ON user (agentbuff_sub);
+
+-- SSO Identity Bridge federated identities: the ONLY key is (issuer, sub); email
+-- is never used to match an existing account (PRD §7.1.3).
+CREATE TABLE IF NOT EXISTS external_identity (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL,
+  issuer TEXT NOT NULL,
+  sub TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  claimed_email TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE (issuer, sub)
+);
+CREATE INDEX IF NOT EXISTS ix_ext_identity_company ON external_identity (company_id);
+
+CREATE INDEX IF NOT EXISTS ix_evt_company_time ON attendance_event (company_id, event_time_server);
+CREATE INDEX IF NOT EXISTS ix_evt_record ON attendance_event (attendance_record_id);
+CREATE INDEX IF NOT EXISTS ix_session_expires ON session (expires_at);
+CREATE INDEX IF NOT EXISTS ix_ot_company_emp_date ON overtime_request (company_id, employee_id, work_date);
+CREATE INDEX IF NOT EXISTS ix_leave_company_emp ON leave_request (company_id, employee_id);
+`)
 
 export function now(): string {
   return new Date().toISOString()

@@ -44,10 +44,38 @@ export interface Entitlement {
 type CacheEntry = { res: Entitlement; at: number }
 const cache = new Map<string, CacheEntry>()
 
+/**
+ * Production with NO entitlement source configured (and not explicitly disabled
+ * with AGENTBUFF_GATE_DISABLED=1) is a deploy mistake. It must never silently
+ * mean "everyone is entitled": owner flows (company creation, owner sign-in,
+ * AgentBuff auto-connect) fail CLOSED with reason `gate_misconfigured`.
+ * Existing companies keep working (companyOpen) so staff are not locked out by
+ * an operator's config error — the startup log shouts about it instead.
+ */
+export function gateMisconfigured(): boolean {
+  return process.env.NODE_ENV === 'production' && !GATE_DISABLED && !masukSiap() && !LEGACY_READY
+}
+
+/** Loud startup diagnostics (called from index.ts). */
+export function logGateStartup(): void {
+  if (gateMisconfigured()) {
+    console.error('================================================================')
+    console.error('[absentra] FATAL CONFIG: AgentBuff entitlement gate is NOT configured in production.')
+    console.error('[absentra] Set AGENTBUFF_MASUK_CLIENT_ID + AGENTBUFF_MASUK_CLIENT_SECRET (or the legacy')
+    console.error('[absentra] AGENTBUFF_ENTITLEMENT_URL + AGENTBUFF_PARTNER_SECRET). Until then new owners')
+    console.error('[absentra] cannot sign in or create companies (fail-closed: gate_misconfigured).')
+    console.error('================================================================')
+  } else if (GATE_DISABLED && process.env.NODE_ENV === 'production') {
+    console.warn('[absentra] WARNING: AGENTBUFF_GATE_DISABLED=1 in production — every owner is treated as entitled.')
+  }
+}
+
 /** Enforced by default. AGENTBUFF_GATE_DISABLED=1 runs Absentra standalone (local dev). */
 export function gateEnabled(): boolean {
-  return !GATE_DISABLED && (masukSiap() || LEGACY_READY)
+  return !GATE_DISABLED && (masukSiap() || LEGACY_READY || gateMisconfigured())
 }
+
+const MISCONFIGURED: Entitlement = { entitled: false, reason: 'gate_misconfigured' }
 export function gateProductKey(): string {
   return PRODUCT_KEY
 }
@@ -115,6 +143,7 @@ async function checkOwner(owner: Owner): Promise<Entitlement> {
  */
 export async function ownerEntitlement(userId: string): Promise<Entitlement> {
   if (!gateEnabled()) return { entitled: true, reason: 'gate_disabled' }
+  if (gateMisconfigured()) return MISCONFIGURED
   const u = db.prepare('SELECT id, email, agentbuff_sub FROM user WHERE id = ?').get(userId) as Owner | undefined
   if (!u) return { entitled: false, reason: 'tidak_dikenal' }
   return checkOwner(u)
@@ -127,6 +156,7 @@ export function forgetOwner(userId: string): void {
 
 /** Legacy login gate (Google path while Masuk isn't configured): always fresh, no grace. */
 export async function checkEntitlementStrict(email: string): Promise<Entitlement> {
+  if (gateMisconfigured()) return MISCONFIGURED
   if (!gateEnabled() || masukSiap()) return { entitled: true, reason: 'gate_disabled' }
   const fresh = await fetchLegacy(email.toLowerCase().trim())
   return fresh ?? { entitled: false, reason: 'gate_unreachable' }
@@ -155,6 +185,7 @@ export function companyOwnerEmail(companyId: string): string | null {
  */
 export async function companyOpen(companyId: string): Promise<Entitlement> {
   if (!gateEnabled()) return { entitled: true, reason: 'gate_disabled' }
+  if (gateMisconfigured()) return { entitled: true, reason: 'gate_misconfigured' } // see gateMisconfigured()
   const owner = companyOwner(companyId)
   if (!owner) return { entitled: true, reason: 'no_owner' } // don't hard-block a mis-seeded company
   return checkOwner(owner)
@@ -163,6 +194,7 @@ export async function companyOpen(companyId: string): Promise<Entitlement> {
 /** Status of a specific user as an owner-to-be (company creation). Always fresh. */
 export async function ownerStatusFresh(userId: string): Promise<Entitlement> {
   if (!gateEnabled()) return { entitled: true, reason: 'gate_disabled' }
+  if (gateMisconfigured()) return MISCONFIGURED
   const u = db.prepare('SELECT id, email, agentbuff_sub FROM user WHERE id = ?').get(userId) as Owner | undefined
   if (!u) return { entitled: false, reason: 'tidak_dikenal' }
   if (masukSiap() && !u.agentbuff_sub) return { entitled: false, reason: 'perlu_agentbuff' }

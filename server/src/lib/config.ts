@@ -16,6 +16,8 @@ try {
   }
 } catch { /* no .env file — fine */ }
 
+const isProduction = () => process.env.NODE_ENV === 'production'
+
 /** Comma-separated emails allowed to use email+password (admin/dev bypass). */
 function parseAllowlist(raw: string | undefined): string[] {
   if (!raw?.trim()) return []
@@ -32,10 +34,13 @@ export const config = {
   /** "Masuk dengan AgentBuff" (pemilik). Aktif begitu AGENTBUFF_MASUK_CLIENT_ID + SECRET diisi. */
   get agentbuffEnabled() { return !!(process.env.AGENTBUFF_MASUK_CLIENT_ID && process.env.AGENTBUFF_MASUK_CLIENT_SECRET) },
   get agentbuffRedirectUri() { return `${this.appOrigin}/api/auth/agentbuff/callback` },
-  get passwordAuthEnabled() { return this.passwordAuthAllowlist.length > 0 },
+  get passwordAuthEnabled() {
+    return this.passwordAuthAllowlist.some((e) => e !== '*') || (this.passwordAuthAllowlist.includes('*') && !isProduction())
+  },
   isPasswordAllowed(email: string) {
-    // '*' = allow all (tests / local emergency). Production should list explicit emails.
-    if (this.passwordAuthAllowlist.includes('*')) return true
+    // '*' = allow all — tests / local only. It is REFUSED in production, where the
+    // allowlist must name explicit emails (an open password door bypasses Google/AgentBuff).
+    if (this.passwordAuthAllowlist.includes('*') && !isProduction()) return true
     return this.passwordAuthAllowlist.includes(email.toLowerCase().trim())
   },
 }

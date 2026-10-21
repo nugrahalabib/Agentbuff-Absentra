@@ -1,9 +1,11 @@
-import { Router } from 'express'
+import { Router, type Request, type Response } from 'express'
 import { z } from 'zod'
 import { db, now } from '../lib/db.js'
 import { id, token } from '../lib/ids.js'
 import { mapCompany, mapMembership, mapUser } from '../lib/map.js'
-import { SESSION_COOKIE, createSession, destroySession, setSessionCompany, requireAuth } from '../lib/context.js'
+import { SESSION_COOKIE, SESSION_MAX_AGE_MS, createSession, destroySession, setSessionCompany, requireAuth } from '../lib/context.js'
+import { cookieOpts } from '../lib/httpSecurity.js'
+import { LIMITS } from '../lib/rateLimit.js'
 import { hashPassword, verifyPassword } from '../lib/password.js'
 import { audit } from '../lib/audit.js'
 import { config } from '../lib/config.js'
@@ -13,22 +15,31 @@ import { bahanBaru, tukarKode, urlOtorisasi } from '../lib/agentbuffMasuk.js'
 export const authRouter = Router()
 
 const RT_COOKIE = 'absentra_rt'
-const rtCookieOpts = { httpOnly: true, sameSite: 'lax' as const, secure: false, maxAge: 60 * 864e5, path: '/' }
+const RT_MAX_AGE_MS = 60 * 864e5
 
 /** Issue a rotating refresh token (PRD §7.1.2). Cookie value = token id. */
-function issueRefresh(res: any, userId: string, companyId: string | null, familyId?: string) {
+function issueRefresh(req: Request, res: Response, userId: string, companyId: string | null, familyId?: string) {
   const rid = id('rt')
   const fam = familyId ?? id('fam')
   db.prepare('INSERT INTO refresh_token (id, family_id, user_id, company_id, used, revoked, created_at, expires_at) VALUES (?,?,?,?,0,0,?,?)')
-    .run(rid, fam, userId, companyId, now(), new Date(Date.now() + 60 * 864e5).toISOString())
-  res.cookie(RT_COOKIE, rid, rtCookieOpts)
+    .run(rid, fam, userId, companyId, now(), new Date(Date.now() + RT_MAX_AGE_MS).toISOString())
+  res.cookie(RT_COOKIE, rid, cookieOpts(req, RT_MAX_AGE_MS))
+}
+
+/** Start a session: drop the browser's previous one (no unbounded session rows), set the cookie. */
+function startSession(req: Request, res: Response, userId: string, companyId: string | null): string {
+  const prev = req.cookies?.[SESSION_COOKIE]
+  if (typeof prev === 'string' && prev) destroySession(prev)
+  const sid = createSession(userId, companyId)
+  res.cookie(SESSION_COOKIE, sid, cookieOpts(req, SESSION_MAX_AGE_MS))
+  return sid
 }
 
 /**
  * Rotate the refresh token. Reusing an already-used/revoked token is treated as
  * theft → the whole family is revoked (PRD §7.1.2 reuse detection / TC-018).
  */
-authRouter.post('/refresh', (req, res) => {
+authRouter.post('/refresh', LIMITS.refresh, (req, res) => {
   const rid = req.cookies?.[RT_COOKIE]
   if (!rid) return res.status(401).json({ error: 'no_refresh' })
   const row = db.prepare('SELECT * FROM refresh_token WHERE id=?').get(rid) as any
@@ -39,9 +50,9 @@ authRouter.post('/refresh', (req, res) => {
     return res.status(401).json({ error: 'refresh_reuse_detected' })
   }
   db.prepare('UPDATE refresh_token SET used=1 WHERE id=?').run(row.id)
-  issueRefresh(res, row.user_id, row.company_id, row.family_id)
-  const sid = createSession(row.user_id, row.company_id)
-  res.cookie(SESSION_COOKIE, sid, cookieOpts)
+  issueRefresh(req, res, row.user_id, row.company_id, row.family_id)
+  // Rotation REPLACES the browser's session row instead of piling up a new one per refresh.
+  startSession(req, res, row.user_id, row.company_id)
   res.json({ ok: true })
 })
 
@@ -52,10 +63,22 @@ authRouter.get('/config', (_req, res) => res.json({
   agentbuffEnabled: config.agentbuffEnabled,
 }))
 
-/** Upsert a global user from a verified Google profile + claim pending invites. */
-function upsertGoogleUser(profile: { sub: string; email: string; name?: string; picture?: string }) {
+/**
+ * Upsert a global user from a verified Google profile + claim pending invites.
+ * Identity key = Google `sub` (PRD §7.1.2). Falling back to the email is only
+ * allowed for a VERIFIED email and only onto an account not already bound to a
+ * different Google identity — otherwise someone else's Google account with the
+ * same (unverified) address could take the account over.
+ */
+function upsertGoogleUser(profile: { sub: string; email: string; emailVerified: boolean; name?: string; picture?: string }) {
   const email = profile.email.toLowerCase().trim()
-  let user = db.prepare('SELECT * FROM user WHERE email = ? OR google_sub = ?').get(email, profile.sub) as any
+  let user = db.prepare('SELECT * FROM user WHERE google_sub = ?').get(profile.sub) as any
+  if (!user) {
+    if (!profile.emailVerified) throw new Error('email_tidak_terverifikasi')
+    user = db.prepare('SELECT * FROM user WHERE email = ?').get(email) as any
+    const boundElsewhere = user?.google_sub && !String(user.google_sub).startsWith('local:') && user.google_sub !== profile.sub
+    if (boundElsewhere) throw new Error('akun_lain')
+  }
   if (!user) {
     const uid = id('usr')
     db.prepare('INSERT INTO user (id, google_sub, email, name, avatar_url, created_at) VALUES (?,?,?,?,?,?)').run(uid, profile.sub, email, profile.name ?? email.split('@')[0], profile.picture ?? null, now())
@@ -73,16 +96,24 @@ const G_NEXT = 'absentra_gnext'
 
 /** Only allow same-origin relative paths (e.g. /invite/xyz). */
 function safeNextPath(raw: unknown): string | null {
-  if (typeof raw !== 'string' || !raw.startsWith('/') || raw.startsWith('//')) return null
+  if (typeof raw !== 'string' || !raw.startsWith('/') || raw.startsWith('//') || raw.includes('\\')) return null
   return raw
+}
+
+/** True when `next` points at a still-usable invite link (`/invite/<token>`). */
+export function nextIsValidInvite(next: string | null): boolean {
+  const m = next ? /^\/invite\/([A-Za-z0-9_-]{8,64})(?:[/?#].*)?$/.exec(next) : null
+  if (!m) return false
+  const inv = db.prepare('SELECT expires_at, used_count, max_uses FROM invite WHERE token = ?').get(m[1]) as any
+  return !!inv && inv.expires_at > now() && inv.used_count < inv.max_uses
 }
 
 authRouter.get('/google/start', (req, res) => {
   if (!config.googleEnabled) return res.status(503).json({ error: 'google_not_configured' })
   const state = token()
-  res.cookie(G_STATE, state, { httpOnly: true, sameSite: 'lax', maxAge: 600_000, path: '/' })
+  res.cookie(G_STATE, state, cookieOpts(req, 600_000))
   const next = safeNextPath(req.query.next)
-  if (next) res.cookie(G_NEXT, next, { httpOnly: true, sameSite: 'lax', maxAge: 600_000, path: '/' })
+  if (next) res.cookie(G_NEXT, next, cookieOpts(req, 600_000))
   else res.clearCookie(G_NEXT, { path: '/' })
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth')
   url.searchParams.set('client_id', config.googleClientId)
@@ -116,7 +147,7 @@ authRouter.get('/google/callback', async (req, res) => {
     const info = await infoRes.json() as any
     if (!info.email) return res.redirect(`${config.appOrigin}/login?error=noemail`)
 
-    const user = upsertGoogleUser({ sub: info.sub, email: info.email, name: info.name, picture: info.picture })
+    const user = upsertGoogleUser({ sub: info.sub, email: info.email, emailVerified: info.email_verified === true, name: info.name, picture: info.picture })
     const memberships = membershipsForUser(user.id)
     // AGENTBUFF GATE: a would-be OR returning OWNER must be an entitled AgentBuff
     // buyer (active OP Buff/trial + owns this product). Invited STAFF (they carry a
@@ -125,7 +156,11 @@ authRouter.get('/google/callback', async (req, res) => {
     // the door — no session is granted, but their data is untouched.
     const isOwner = memberships.some((m) => m.membership.role === 'owner')
     const isNewUser = memberships.length === 0
-    if (isNewUser || isOwner) {
+    // A brand-new user arriving from a valid invite link is STAFF-to-be: let them
+    // in so they can accept it. They still cannot create a company — POST
+    // /companies enforces the owner gate (perlu_agentbuff) on its own.
+    const joiningViaInvite = isNewUser && nextIsValidInvite(next)
+    if ((isNewUser || isOwner) && !joiningViaInvite) {
       // Since "Masuk dengan AgentBuff": owners and would-be owners sign in through
       // AgentBuff (which enforces subscription + product ownership). Google stays
       // for invited STAFF only. The account/data is untouched — the owner simply
@@ -138,16 +173,14 @@ authRouter.get('/google/callback', async (req, res) => {
         return res.redirect(`${config.appOrigin}/login?error=${encodeURIComponent(ent.reason)}`)
       }
     }
-    const sid = createSession(user.id, memberships[0]?.company.id ?? null)
-    res.cookie(SESSION_COOKIE, sid, cookieOpts)
-    issueRefresh(res, user.id, memberships[0]?.company.id ?? null)
+    startSession(req, res, user.id, memberships[0]?.company.id ?? null)
+    issueRefresh(req, res, user.id, memberships[0]?.company.id ?? null)
     res.redirect(`${config.appOrigin}${next ?? '/'}`)
-  } catch {
-    res.redirect(`${config.appOrigin}/login?error=oauth`)
+  } catch (e) {
+    const kode = e instanceof Error && (e.message === 'akun_lain' || e.message === 'email_tidak_terverifikasi') ? e.message : 'oauth'
+    res.redirect(`${config.appOrigin}/login?error=${kode}`)
   }
 })
-
-const cookieOpts = { httpOnly: true, sameSite: 'lax' as const, secure: false, maxAge: 30 * 864e5, path: '/' }
 
 /* ------------------------------------------------------------------ Masuk dengan AgentBuff */
 
@@ -177,9 +210,7 @@ authRouter.get('/agentbuff/start', (req, res) => {
   if (!config.agentbuffEnabled) return res.status(503).json({ error: 'agentbuff_not_configured' })
   const b = bahanBaru()
   const next = safeNextPath(req.query.next)
-  res.cookie(AB_COOKIE, JSON.stringify({ s: b.state, n: b.nonce, v: b.verifier, nx: next }), {
-    httpOnly: true, sameSite: 'lax', secure: config.appOrigin.startsWith('https://'), maxAge: 600_000, path: '/api/auth',
-  })
+  res.cookie(AB_COOKIE, JSON.stringify({ s: b.state, n: b.nonce, v: b.verifier, nx: next }), cookieOpts(req, 600_000, '/api/auth'))
   res.redirect(urlOtorisasi(b, config.agentbuffRedirectUri, req.query.ganti === '1'))
 })
 
@@ -203,9 +234,8 @@ authRouter.get('/agentbuff/callback', async (req, res) => {
     forgetOwner(user.id) // a just-renewed owner must not wait for the freeze cache
     const memberships = membershipsForUser(user.id)
     const companyId = memberships[0]?.company.id ?? null
-    const sid = createSession(user.id, companyId)
-    res.cookie(SESSION_COOKIE, sid, cookieOpts)
-    issueRefresh(res, user.id, companyId)
+    startSession(req, res, user.id, companyId)
+    issueRefresh(req, res, user.id, companyId)
     res.redirect(`${config.appOrigin}${safeNextPath(b.nx) ?? '/'}`)
   } catch (e) {
     return gagal(e instanceof Error && e.message === 'akun_lain' ? 'akun_lain' : 'oauth')
@@ -222,30 +252,35 @@ function membershipsForUser(userId: string) {
 
 /**
  * Email+password auth — only for emails on PASSWORD_AUTH_ALLOWLIST (admin/dev).
- * Everyone else must use Google OAuth (PRD §7.1 / NG3).
+ * Everyone else must use Google / AgentBuff (PRD §7.1 / NG3). A valid password
+ * is ALWAYS required: an existing account without a password (Google/AgentBuff
+ * user) can never be entered — nor have a "first password" planted — here.
  */
-authRouter.post('/signin', (req, res) => {
-  const body = z.object({ email: z.string().email(), name: z.string().min(1).optional(), password: z.string().optional(), register: z.boolean().default(true) }).parse(req.body)
+authRouter.post('/signin', LIMITS.signin, (req, res) => {
+  const body = z.object({
+    email: z.string().email().max(254),
+    name: z.string().trim().min(1).max(120).optional(),
+    password: z.string().max(200).optional(),
+    register: z.boolean().default(true),
+  }).parse(req.body)
   const email = body.email.toLowerCase().trim()
   if (!config.isPasswordAllowed(email)) {
     return res.status(403).json({ error: 'password_auth_forbidden', message: 'Gunakan Masuk dengan Google.' })
   }
+  const password = body.password ?? ''
   let user = db.prepare('SELECT * FROM user WHERE email = ?').get(email) as any
   if (!user) {
     // "Masuk" (login) must NOT auto-create — tell the caller to register first.
     if (!body.register) return res.status(404).json({ error: 'not_registered' })
+    if (password.length < 6) return res.status(400).json({ error: 'password_required', message: 'Kata sandi minimal 6 karakter.' })
     const uid = id('usr')
     db.prepare('INSERT INTO user (id, google_sub, email, name, password_hash, created_at) VALUES (?,?,?,?,?,?)').run(
-      uid, `local:${email}`, email, body.name ?? email.split('@')[0], body.password ? hashPassword(body.password) : null, now(),
+      uid, `local:${email}`, email, body.name ?? email.split('@')[0], hashPassword(password), now(),
     )
     user = db.prepare('SELECT * FROM user WHERE id = ?').get(uid)
   } else {
-    // Existing account. If it has a password, verify it.
-    if (user.password_hash && !verifyPassword(body.password ?? '', user.password_hash)) {
-      return res.status(401).json({ error: 'invalid_credentials' })
-    }
-    if (!user.password_hash && body.password) {
-      db.prepare('UPDATE user SET password_hash=? WHERE id=?').run(hashPassword(body.password), user.id)
+    if (!user.password_hash || !verifyPassword(password, user.password_hash)) {
+      return res.status(401).json({ error: 'invalid_credentials', message: 'Email atau kata sandi salah.' })
     }
     if (body.register && body.name && user.name !== body.name) {
       db.prepare('UPDATE user SET name=? WHERE id=?').run(body.name, user.id)
@@ -258,9 +293,8 @@ authRouter.post('/signin', (req, res) => {
 
   const memberships = membershipsForUser(user.id)
   const activeCompanyId = memberships[0]?.company.id ?? null
-  const sid = createSession(user.id, activeCompanyId)
-  res.cookie(SESSION_COOKIE, sid, cookieOpts)
-  issueRefresh(res, user.id, activeCompanyId)
+  startSession(req, res, user.id, activeCompanyId)
+  issueRefresh(req, res, user.id, activeCompanyId)
   res.json({ user: mapUser(user), memberships, activeCompanyId })
 })
 
@@ -268,6 +302,12 @@ authRouter.get('/me', (req, res) => {
   if (!req.ctx) return res.status(401).json({ error: 'unauthenticated' })
   const user = db.prepare('SELECT * FROM user WHERE id = ?').get(req.ctx.userId) as any
   if (!user) return res.status(401).json({ error: 'unauthenticated' })
+  // UU PDP consent of the signed-in employee in the ACTIVE company (false when
+  // there is no employee profile). The UI shows the consent screen before the
+  // first clock-in when consentLocation is false (POST /api/me/consent).
+  const emp = req.ctx.employeeId && req.ctx.companyId
+    ? db.prepare('SELECT consent_location_at, consent_photo_at FROM employee_profile WHERE id = ? AND company_id = ?').get(req.ctx.employeeId, req.ctx.companyId) as any
+    : null
   res.json({
     user: mapUser(user),
     memberships: membershipsForUser(user.id),
@@ -275,6 +315,8 @@ authRouter.get('/me', (req, res) => {
     employeeId: req.ctx.employeeId ?? null,
     hasPassword: !!user.password_hash,
     passwordAuthAllowed: config.isPasswordAllowed(user.email),
+    consentLocation: !!emp?.consent_location_at,
+    consentPhoto: !!emp?.consent_photo_at,
   })
 })
 
@@ -306,7 +348,7 @@ authRouter.post('/signout', (req, res) => {
 
 authRouter.post('/switch-tenant', requireAuth, (req, res) => {
   const body = z.object({ companyId: z.string() }).parse(req.body)
-  const member = db.prepare(`SELECT * FROM membership WHERE company_id = ? AND user_id = ? AND status != 'disabled'`).get(body.companyId, req.ctx!.userId)
+  const member = db.prepare(`SELECT * FROM membership WHERE company_id = ? AND user_id = ? AND status = 'active'`).get(body.companyId, req.ctx!.userId)
   if (!member) return res.status(403).json({ error: 'not_a_member' })
   setSessionCompany(req.ctx!.sessionId, body.companyId)
   res.json({ activeCompanyId: body.companyId })

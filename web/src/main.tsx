@@ -1,16 +1,12 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
+import '@fontsource-variable/geist/wght.css'
 import App from './App'
 import './index.css'
+import { bacaPilihanTema, pantauTemaSistem, terapkanTema } from './lib/tema'
 
-// Apply persisted theme before paint to avoid a flash.
-try {
-  const raw = localStorage.getItem('absentra_ui_v1')
-  const theme = raw ? JSON.parse(raw)?.state?.theme : 'light'
-  document.documentElement.setAttribute('data-theme', theme === 'dark' ? 'dark' : 'light')
-} catch {
-  document.documentElement.setAttribute('data-theme', 'light')
-}
+terapkanTema(bacaPilihanTema())
+pantauTemaSistem()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

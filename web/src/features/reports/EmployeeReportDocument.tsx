@@ -34,11 +34,20 @@ export interface EmployeeReport {
   }>
 }
 
+const STATUS_HARI: Record<string, string> = {
+  on_time: 'Tepat waktu',
+  late: 'Terlambat',
+  absent: 'Tidak hadir',
+  leave: 'Cuti/izin',
+  cuti: 'Cuti/izin',
+  off: 'Libur',
+}
+
 const LEAVE_LABEL: Record<string, string> = {
   tahunan: 'Cuti tahunan',
   sakit: 'Sakit',
   izin: 'Izin',
-  tanpa_bayar: 'Tanpa bayar',
+  tanpa_bayar: 'Cuti tanpa gaji',
 }
 
 /** Print-ready employee periodic report document (PRD §7.4). */
@@ -49,13 +58,13 @@ export function EmployeeReportDocument({ report }: { report: EmployeeReport }) {
     .join(' · ')
 
   return (
-    <article className="employee-report print-area rounded-lg border border-border bg-surface-elevated p-5 sm:p-8">
+    <article className="employee-report print-area kaca-panel rounded-[28px] p-5 sm:p-8">
       <header className="mb-6 flex flex-wrap items-start justify-between gap-4 border-b border-border pb-4">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-primary">Laporan Karyawan</p>
+          <p className="text-[13px] font-semibold text-aksen-teks">Rapor kehadiran</p>
           <h2 className="mt-1 text-xl font-bold text-text sm:text-2xl">{company.displayName}</h2>
           <p className="mt-1 text-sm text-text-muted">
-            Periode {formatDate(period.from + 'T00:00:00')} – {formatDate(period.to + 'T00:00:00')}
+            Periode {formatDate(period.from)} sampai {formatDate(period.to)}
           </p>
         </div>
         <div className="text-right text-sm">
@@ -69,7 +78,7 @@ export function EmployeeReportDocument({ report }: { report: EmployeeReport }) {
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Stat label="Hadir" value={String(summary.presentDays)} />
           <Stat label="Telat" value={`${summary.lateDays} hari / ${summary.lateMinutesTotal} mnt`} />
-          <Stat label="Alpa" value={String(summary.absentDays)} />
+          <Stat label="Tidak hadir" value={String(summary.absentDays)} />
           <Stat label="Cuti / Izin" value={String(summary.leaveDays)} />
           <Stat label="Pulang cepat" value={String(summary.earlyLeaveDays)} />
           <Stat label="Lembur" value={`${summary.overtimeHoursTotal} jam`} />
@@ -102,12 +111,12 @@ export function EmployeeReportDocument({ report }: { report: EmployeeReport }) {
                 {days.map((d) => (
                   <tr key={d.date} className="border-t border-border">
                     <td className="p-2 tabular-nums text-text">{d.date}</td>
-                    <td className="p-2 text-text-muted">{d.shiftName ?? '—'}</td>
-                    <td className="p-2 tabular-nums">{d.clockInAt ? formatTime(d.clockInAt) : '—'}</td>
-                    <td className="p-2 tabular-nums">{d.clockOutAt ? formatTime(d.clockOutAt) : '—'}</td>
-                    <td className="p-2 font-medium text-text">{d.status}</td>
-                    <td className="p-2 text-right tabular-nums">{d.lateMinutes || '—'}</td>
-                    <td className="p-2 text-text-muted">{d.note ?? '—'}</td>
+                    <td className="p-2 text-text-muted">{d.shiftName ?? '-'}</td>
+                    <td className="p-2 tabular-nums">{d.clockInAt ? formatTime(d.clockInAt) : '-'}</td>
+                    <td className="p-2 tabular-nums">{d.clockOutAt ? formatTime(d.clockOutAt) : '-'}</td>
+                    <td className="p-2 font-medium text-text">{STATUS_HARI[d.status] ?? d.status}</td>
+                    <td className="p-2 text-right tabular-nums">{d.lateMinutes || '-'}</td>
+                    <td className="p-2 text-text-muted">{d.note ?? '-'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -121,8 +130,8 @@ export function EmployeeReportDocument({ report }: { report: EmployeeReport }) {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md bg-surface px-3 py-2">
-      <p className="text-[11px] uppercase tracking-wide text-text-muted">{label}</p>
+    <div className="rounded-[16px] bg-surface px-3 py-2.5">
+      <p className="text-[13px] text-text-muted">{label}</p>
       <p className="mt-0.5 text-sm font-semibold tabular-nums text-text">{value}</p>
     </div>
   )

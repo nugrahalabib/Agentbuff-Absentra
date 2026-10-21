@@ -3,7 +3,10 @@ import cors from 'cors'
 import cookieParser from 'cookie-parser'
 import { join } from 'node:path'
 import './lib/db.js' // initialise schema (reads ABSENTRA_DB)
+import { config } from './lib/config.js'
 import { loadContext } from './lib/context.js'
+import { requestContext } from './lib/audit.js'
+import { originGuard } from './lib/httpSecurity.js'
 import { authRouter } from './routes/auth.js'
 import { companyRouter } from './routes/company.js'
 import { orgRouter } from './routes/org.js'
@@ -18,11 +21,44 @@ import { ssoRouter } from './routes/sso.js'
 import { auditRouter } from './routes/audit.js'
 import { agentbuffMcpRouter } from './routes/agentbuffMcp.js'
 
+/**
+ * Final error handler. Validation errors are explained; anything else is logged
+ * server-side and answered with a generic `internal` (never the raw message,
+ * which can leak SQL/paths/stack details).
+ */
+export function errorHandler(err: any, req: express.Request, res: express.Response, _next: express.NextFunction) {
+  if (res.headersSent) return
+  if (err?.name === 'ZodError') return res.status(400).json({ error: 'validation', detail: err.errors })
+  if (err?.type === 'entity.too.large') return res.status(413).json({ error: 'payload_too_large', message: 'Data yang dikirim terlalu besar.' })
+  if (err?.type === 'entity.parse.failed') return res.status(400).json({ error: 'invalid_json' })
+  console.error(`[absentra] ${req.method} ${req.path} failed:`, err)
+  res.status(500).json({ error: 'internal', message: 'Terjadi kesalahan pada server. Silakan coba lagi.' })
+}
+
 export function createApp() {
   const app = express()
-  app.use(cors({ origin: true, credentials: true }))
-  app.use(express.json({ limit: '6mb' }))
+  app.disable('x-powered-by')
+  // One reverse proxy (Coolify/Traefik) sits in front: honour its X-Forwarded-*
+  // so req.ip / req.secure are the real client values (rate limits, Secure cookies).
+  app.set('trust proxy', 1)
+
+  // Production is single-origin (the SPA is served below), so cross-origin
+  // access is only ever needed by the Vite dev server.
+  if (process.env.NODE_ENV !== 'production') {
+    const devOrigins = [...new Set([config.appOrigin, 'http://localhost:7707', 'http://localhost:5173'])]
+    app.use(cors({ origin: devOrigins, credentials: true }))
+  }
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff')
+    res.setHeader('Referrer-Policy', 'same-origin')
+    next()
+  })
+  app.use(originGuard) // CSRF: reject cross-site state-changing /api calls (production)
+  app.use(express.json({ limit: '1mb' }))
   app.use(cookieParser())
+  // After the body parser: everything below runs synchronously inside this
+  // context, so audit() can record the caller's IP.
+  app.use((req, _res, next) => requestContext.run({ ip: req.ip }, next))
   app.use(loadContext)
 
   app.get('/api/health', (_req, res) => res.json({ ok: true }))
@@ -53,10 +89,6 @@ export function createApp() {
     })
   }
 
-  app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-    if (err?.name === 'ZodError') return res.status(400).json({ error: 'validation', detail: err.errors })
-    console.error(err)
-    res.status(500).json({ error: 'server_error', message: String(err?.message ?? err) })
-  })
+  app.use(errorHandler)
   return app
 }

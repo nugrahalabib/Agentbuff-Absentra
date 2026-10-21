@@ -1,81 +1,96 @@
+/** Buka link undangan → masuk Google → setuju data (UU PDP) → bergabung. */
 import { useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, ApiError } from '@/lib/api/client'
+import { api } from '@/lib/api/client'
 import { useActor } from '@/auth/useActor'
-import { Button, Card, Spinner } from '@/components/ui'
-import { IconCheck } from '@/components/ui/icons'
-import { t } from '@/i18n'
+import { Button, Centang, PesanGalat, Spinner } from '@/components/ui'
+import { Gelembung, LogoAbsentra, Maskot } from '@/components/merek'
+import { IconLock, IconMapPin } from '@/components/ui/icons'
+import { pesanGalat } from '@/lib/galat'
 
-/** Open invite link → Google sign-in → consent (PDP) → join company (PRD §6.3). */
-export function InviteAcceptPage() {
+const PERAN: Record<string, string> = { employee: 'karyawan', hr: 'HR', branch_admin: 'admin cabang' }
+
+export default function InviteAcceptPage() {
   const { token = '' } = useParams()
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const { isSignedIn, isLoading: meLoading } = useActor()
-
-  const info = useQuery({ queryKey: ['invite', token], queryFn: () => api.inviteInfo(token) })
+  const { isSignedIn, isLoading, user } = useActor()
+  const info = useQuery({ queryKey: ['invite', token], queryFn: () => api.inviteInfo(token), retry: false })
   const cfg = useQuery({ queryKey: ['authConfig'], queryFn: () => api.authConfig() })
-  const [consentLocation, setCL] = useState(false)
-  const [consentPhoto, setCP] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [lokasi, setLokasi] = useState(false)
+  const [foto, setFoto] = useState(false)
+  const [proses, setProses] = useState(false)
+  const [galat, setGalat] = useState<string | null>(null)
 
-  if (info.isLoading || meLoading) return <div className="flex h-full items-center justify-center"><Spinner className="h-6 w-6 text-primary" /></div>
-  if (!info.data?.valid) {
-    return <div className="mx-auto max-w-md px-5 py-16 text-center text-text-muted">Undangan tidak valid atau sudah kedaluwarsa.</div>
-  }
-
-  const accept = async () => {
-    setError(null); setBusy(true)
+  const terima = async () => {
+    setGalat(null)
+    setProses(true)
     try {
-      await api.acceptInvite(token, { consentLocation, consentPhoto })
-      await qc.invalidateQueries({ queryKey: ['me'] })
-      navigate('/')
+      await api.acceptInvite(token, { consentLocation: lokasi, consentPhoto: foto })
+      qc.clear()
+      navigate('/', { replace: true })
     } catch (e) {
-      setError(e instanceof ApiError && e.body?.error === 'already_member' ? 'Kamu sudah menjadi anggota perusahaan ini.' : 'Gagal menerima undangan.')
-    } finally { setBusy(false) }
+      setGalat(pesanGalat(e, 'Belum bisa bergabung. Coba lagi.'))
+    } finally {
+      setProses(false)
+    }
   }
 
-  const googleHref = `/api/auth/google/start?next=${encodeURIComponent(`/invite/${token}`)}`
+  const masukGoogle = `/api/auth/google/start?next=${encodeURIComponent(`/invite/${token}`)}`
+  const valid = info.data?.valid
 
   return (
-    <div className="mx-auto flex min-h-full max-w-md flex-col justify-center px-5 py-10">
-      <div className="mb-5 text-center">
-        <span className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-lg bg-primary text-on-primary"><IconCheck width={30} height={30} /></span>
-        <h1 className="text-xl font-bold text-text">Bergabung dengan {info.data.companyName}</h1>
-        <p className="mt-1 text-sm text-text-muted">Cabang {info.data.branchName} · sebagai {info.data.role === 'employee' ? 'Karyawan' : info.data.role}</p>
-      </div>
-      <Card>
-        <div className="flex flex-col gap-3">
-          {!isSignedIn && (
-            <div className="flex flex-col gap-2">
-              <p className="text-sm text-text-muted">Masuk dengan Google untuk menerima undangan.</p>
-              {cfg.data?.googleEnabled ? (
-                <a href={googleHref} className="flex min-h-touch w-full items-center justify-center gap-2 rounded-md bg-primary font-semibold text-on-primary hover:bg-primary-pressed">
-                  Masuk dengan Google
-                </a>
-              ) : (
-                <p className="rounded-md bg-warning/10 p-2 text-sm text-warning">Login Google belum dikonfigurasi di server.</p>
-              )}
+    <div className="flex min-h-[100dvh] flex-col">
+      <header className="px-5 py-4 lg:px-10 lg:py-6"><LogoAbsentra ukuran={32} /></header>
+      <main className="mx-auto w-full max-w-md flex-1 px-5 pb-10">
+        {info.isLoading || isLoading ? (
+          <div className="flex justify-center py-24 text-tinta-3"><Spinner className="h-6 w-6" /></div>
+        ) : !valid ? (
+          <div className="kaca-panel flex flex-col items-center rounded-[28px] p-6 text-center">
+            <Maskot pose="cuti" ukuran="sedang" />
+            <h1 className="mt-3 text-[22px] font-bold tracking-[-0.02em] text-tinta">Undangannya sudah tidak berlaku</h1>
+            <p className="mt-1 text-[15px] text-tinta-2">Mungkin sudah kedaluwarsa atau dicabut. Minta link baru ke atasanmu ya.</p>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-end gap-3">
+              <Maskot pose="selfie" ukuran="kecil" prioritas />
+              <Gelembung className="mb-3 flex-1">
+                {isSignedIn ? `Halo ${user?.name?.split(' ')[0] ?? ''}! Satu langkah lagi.` : 'Halo! Kamu diundang bergabung.'}
+              </Gelembung>
             </div>
-          )}
-          {isSignedIn && (
-            <>
-              <div className="rounded-md bg-surface p-3 text-sm">
-                <p className="mb-2 font-medium text-text">Persetujuan data (UU PDP)</p>
-                <label className="mb-1 flex items-start gap-2 text-text-muted"><input type="checkbox" checked={consentLocation} onChange={(e) => setCL(e.target.checked)} /> Saya setuju lokasi saya direkam saat absen.</label>
-                <label className="flex items-start gap-2 text-text-muted"><input type="checkbox" checked={consentPhoto} onChange={(e) => setCP(e.target.checked)} /> Saya setuju foto saya diambil saat absen.</label>
-              </div>
-              {error && <p className="text-sm text-danger" aria-live="polite">{error}</p>}
-              <Button fullWidth loading={busy} disabled={!consentLocation || !consentPhoto} onClick={accept}>
-                Terima & gabung
-              </Button>
-            </>
-          )}
-        </div>
-      </Card>
-      <p className="mt-3 text-center text-xs text-text-muted">{t.tagline}</p>
+            <section className="kaca-panel mt-4 rounded-[28px] p-5 sm:p-6">
+              <p className="text-[14px] font-medium text-tinta-3">Kamu diundang ke</p>
+              <h1 className="mt-1 text-[26px] font-bold leading-tight tracking-[-0.03em] text-tinta">{info.data?.companyName}</h1>
+              <p className="mt-2 flex items-center gap-1.5 text-[15px] text-tinta-2">
+                <IconMapPin width={16} height={16} /> {info.data?.branchName} · sebagai {PERAN[info.data?.role ?? 'employee'] ?? info.data?.role}
+              </p>
+
+              {!isSignedIn ? (
+                <div className="mt-5 flex flex-col gap-3">
+                  {cfg.data?.googleEnabled ? (
+                    <a href={masukGoogle} className="tombol-grafit flex min-h-[54px] items-center justify-center gap-2 rounded-full text-[16px] font-semibold">Masuk dengan Google untuk bergabung</a>
+                  ) : (
+                    <p className="rounded-[16px] bg-perlu-lembut px-4 py-3 text-[14px] text-perlu">Masuk dengan Google belum disiapkan di server ini.</p>
+                  )}
+                  <p className="text-[13px] text-tinta-3">Tidak perlu instal aplikasi. Setelah bergabung, kamu bisa menambahkan Absentra ke layar utama HP.</p>
+                </div>
+              ) : (
+                <div className="mt-5 flex flex-col gap-3">
+                  <div className="rounded-[20px] bg-sumur px-4 py-1">
+                    <Centang checked={lokasi} onChange={setLokasi}>Saya setuju lokasi saya dicatat saat absen <span className="text-tinta-3">(wajib)</span></Centang>
+                    <Centang checked={foto} onChange={setFoto}>Saya setuju foto wajah saya diambil saat absen</Centang>
+                  </div>
+                  <p className="flex items-start gap-2 text-[13px] text-tinta-3"><IconLock width={14} height={14} className="mt-0.5 shrink-0" /> Lokasi dan foto hanya diambil saat kamu absen, dan hanya bisa dilihat atasanmu.</p>
+                  <PesanGalat>{galat}</PesanGalat>
+                  <Button size="lg" fullWidth loading={proses} disabled={!lokasi} onClick={terima}>Gabung sekarang</Button>
+                </div>
+              )}
+            </section>
+          </>
+        )}
+      </main>
     </div>
   )
 }

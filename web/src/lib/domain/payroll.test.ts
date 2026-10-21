@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { hourlyWage, overtimePay, lateDeduction, mealAllowance, computeRecapRow, HOURS_DIVISOR } from './payroll'
+import { hourlyWage, overtimePay, lateDeduction, mealAllowance, computeRecapRow, groupOvertimeByDay, HOURS_DIVISOR } from './payroll'
 import type { Policy } from './types'
 
 const basePolicy: Policy = {
@@ -18,9 +18,13 @@ describe('hourlyWage (PP 35/2021)', () => {
     expect(hourlyWage({ wageBasic: 4_000_000, wageFixedAllowance: 0 })).toBeCloseTo(4_000_000 / 173, 5)
     expect(HOURS_DIVISOR).toBe(173)
   })
-  it('applies 75% basis when variable allowances are included', () => {
-    const hw = hourlyWage({ wageBasic: 3_000_000, wageFixedAllowance: 500_000, wageVariableAllowance: 500_000, includeVariable: true })
+  it('applies 75% of the total wage when basic + fixed is below it (PP 35/2021 Art. 31(3))', () => {
+    const hw = hourlyWage({ wageBasic: 2_000_000, wageFixedAllowance: 500_000, wageVariableAllowance: 1_500_000, includeVariable: true })
     expect(hw).toBeCloseTo((4_000_000 * 0.75) / 173, 5)
+  })
+  it('never lets the 75% basis drop below basic + fixed at 100% (better for the employee)', () => {
+    const hw = hourlyWage({ wageBasic: 3_000_000, wageFixedAllowance: 500_000, wageVariableAllowance: 500_000, includeVariable: true })
+    expect(hw).toBeCloseTo(3_500_000 / 173, 5) // 75% of 4,000,000 = 3,000,000 < 3,500,000
   })
 })
 
@@ -95,5 +99,46 @@ describe('computeRecapRow', () => {
     expect(row.overtimePayTotal).toBe(80_924)
     expect(row.lateDeduction).toBe(15_000) // 30 min * 500
     expect(row.overtimeHoursTotal).toBe(2)
+  })
+})
+
+describe('overtime tiers are applied per work day, not per request', () => {
+  it('two approved 1h workday requests on the same date = hour 1 (1.5x) + hour 2 (2x)', () => {
+    const row = computeRecapRow({
+      employeeId: 'e1', name: 'Andi', wageBasic: 4_000_000, wageFixedAllowance: 0, workweek: 'six_day',
+      presentDays: 1, lateMinutesTotal: 0, absentDays: 0, leaveDays: 0,
+      overtimeBlocks: [
+        { workDate: '2026-06-02', hours: 1, dayType: 'workday' },
+        { workDate: '2026-06-02', hours: 1, dayType: 'workday' },
+      ],
+      policy: basePolicy,
+    })
+    // Same as the verified 2h example: 3.5 x 23,121 = Rp80,924 (not 3 x 23,121).
+    expect(row.overtimePayTotal).toBe(80_924)
+    expect(row.overtimeLines).toHaveLength(1)
+    expect(row.overtimeHoursTotal).toBe(2)
+  })
+  it('different dates stay separate days', () => {
+    const g = groupOvertimeByDay([
+      { workDate: '2026-06-03', hours: 1, dayType: 'workday' },
+      { workDate: '2026-06-02', hours: 1.5, dayType: 'workday' },
+      { workDate: '2026-06-02', hours: 0.5, dayType: 'workday' },
+    ])
+    expect(g).toEqual([
+      { workDate: '2026-06-02', hours: 2, dayType: 'workday' },
+      { workDate: '2026-06-03', hours: 1, dayType: 'workday' },
+    ])
+  })
+  it('meal allowance on OT >= 4h is judged per day (2h + 2h on one day qualifies)', () => {
+    const row = computeRecapRow({
+      employeeId: 'e1', name: 'Andi', wageBasic: 4_000_000, wageFixedAllowance: 0, workweek: 'six_day',
+      presentDays: 0, lateMinutesTotal: 0, absentDays: 0, leaveDays: 0,
+      overtimeBlocks: [
+        { workDate: '2026-06-02', hours: 2, dayType: 'workday' },
+        { workDate: '2026-06-02', hours: 2, dayType: 'workday' },
+      ],
+      policy: basePolicy,
+    })
+    expect(row.mealAllowance).toBe(25_000)
   })
 })

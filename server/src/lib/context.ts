@@ -13,6 +13,7 @@ import { companyOpen } from './agentbuffGate.js'
 
 export const SESSION_COOKIE = 'absentra_sid'
 const SESSION_DAYS = 30
+export const SESSION_MAX_AGE_MS = SESSION_DAYS * 864e5
 
 export interface Ctx {
   sessionId: string
@@ -95,6 +96,9 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
 export async function requireCompany(req: Request, res: Response, next: NextFunction) {
   if (!req.ctx) return res.status(401).json({ error: 'unauthenticated' })
   if (!req.ctx.companyId || !req.ctx.actor) return res.status(403).json({ error: 'no_active_company' })
+  // A disabled/pending membership must not reach ANY tenant route — including
+  // the ones without a requireCap gate (company profile, branches, clock-in…).
+  if (req.ctx.actor.membership.status !== 'active') return res.status(403).json({ error: 'membership_inactive', message: 'Keanggotaan Anda di perusahaan ini tidak aktif.' })
   try {
     const open = await companyOpen(req.ctx.companyId)
     if (!open.entitled) return res.status(403).json({ error: 'company_frozen', reason: open.reason })

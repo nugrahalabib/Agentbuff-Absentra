@@ -1,5 +1,5 @@
 /**
- * Real API client — talks to the Absentra backend over HTTP (cookie session).
+ * Real API client: talks to the Absentra backend over HTTP (cookie session).
  * Tenant scoping, RBAC, and the domain engines all live server-side; this is a
  * thin typed wrapper. Method names mirror the screens' existing calls; the
  * leading companyId/scope args are now derived from the session server-side and
@@ -44,7 +44,7 @@ const del = <T>(p: string) => req<T>(p, { method: 'DELETE' })
 
 // ---- shared types returned by the API ----
 export interface MembershipWithCompany { membership: Membership; company: Company }
-export interface MeResponse { user: User; memberships: MembershipWithCompany[]; activeCompanyId: string | null; employeeId: string | null; hasPassword?: boolean; passwordAuthAllowed?: boolean }
+export interface MeResponse { user: User; memberships: MembershipWithCompany[]; activeCompanyId: string | null; employeeId: string | null; hasPassword?: boolean; passwordAuthAllowed?: boolean; consentLocation?: boolean; consentPhoto?: boolean }
 export interface BranchWithGeofence extends Branch { geofence: Geofence | null }
 export interface EmployeeRow extends EmployeeProfile { email?: string; role: Role; membershipStatus: string; canSeeWage: boolean; photoData?: string }
 export interface TodayContext {
@@ -78,11 +78,24 @@ export interface FeedRow extends AttendanceRecord {
   name: string; clockInAt: string | null; clockOutAt: string | null; leftEarly: boolean
 }
 
-const QUEUE_KEY = 'absentra_offline_queue_v2'
-function uid() { return Math.random().toString(36).slice(2) + Date.now().toString(36) }
+const QUEUE_KEY = 'absentra_antrean_absen_v3'
+function uid(): string {
+  try { if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID() } catch { /* */ }
+  return Math.random().toString(36).slice(2) + Date.now().toString(36) + Math.random().toString(36).slice(2)
+}
+
+/** Absen yang belum terkirim karena sinyal hilang. Kunci idempoten & waktu asli ikut disimpan. */
+export interface ItemAntrean extends ClockSubmission {
+  idempotencyKey: string
+  eventTimeClient: string
+  fotoDilepas?: boolean
+  /** `userId:companyId` pemilik absen. HP bisa dipakai bergantian; antrean hanya dikirim oleh pemiliknya. */
+  pemilik?: string
+}
+export interface HasilKirimAntrean { terkirim: number; ditolak: string[]; tersisa: number }
 
 class Api {
-  online = true
+  get online(): boolean { return typeof navigator === 'undefined' ? true : navigator.onLine !== false }
 
   // ---- Auth ----
   authConfig() { return req<{ googleEnabled: boolean; passwordAuthEnabled: boolean; agentbuffEnabled?: boolean }>('/auth/config') }
@@ -124,7 +137,7 @@ class Api {
     if (employeeId) q.set('employeeId', employeeId)
     return req<{ assignment: ShiftAssignment; template: ShiftTemplate }[]>(`/shift-assignments?${q}`)
   }
-  bulkAssign(input: { employeeIds: string[]; shiftTemplateId: string; dateStart: string; dateEnd?: string; skipSundays?: boolean }) { return post<{ created: number }>('/shift-assignments', input) }
+  bulkAssign(input: { employeeIds: string[]; shiftTemplateId: string; dateStart: string; dateEnd?: string; skipSundays?: boolean }) { return post<{ created: number; conflicts?: number; conflictDetails?: Array<{ employeeId: string; date: string; reason: string; message?: string }> }>('/shift-assignments', input) }
 
   // ---- Employees / invites ----
   employees(_companyId?: string, _scope?: string[]) { return req<EmployeeRow[]>('/employees') }
@@ -137,12 +150,31 @@ class Api {
   deleteInvite(id: string) { return del(`/invites/${id}`) }
   inviteInfo(token: string) { return req<{ valid: boolean; companyName?: string; branchName?: string; role?: string }>(`/invites/token/${token}`) }
   acceptInvite(token: string, consent: { consentLocation: boolean; consentPhoto: boolean }) { return post<{ companyId: string }>(`/invites/token/${token}/accept`, consent) }
+  /** Persetujuan lokasi/foto karyawan yang ditambahkan langsung oleh admin (UU PDP). */
+  giveConsent(consent: { consentLocation: boolean; consentPhoto: boolean }) { return post<{ ok: true }>('/me/consent', consent) }
 
   // ---- Attendance ----
   todayContext(_companyId?: string, _employeeId?: string) { return req<TodayContext>('/attendance/today-context') }
+  /**
+   * Kirim absen. Bila tidak ada sinyal (navigator.onLine false atau fetch gagal di
+   * jaringan), absen disimpan ke antrean dengan waktu aslinya lalu dikirim otomatis
+   * saat online (lihat flushQueue). Kunci idempoten mencegah absen ganda.
+   */
   async submitClock(sub: ClockSubmission): Promise<ClockResult> {
-    if (!this.online) throw new OfflineError()
-    return post<ClockResult>('/attendance/clock', { ...this.clockBody(sub), idempotencyKey: uid() })
+    const item: ItemAntrean = { ...sub, idempotencyKey: uid(), eventTimeClient: new Date().toISOString(), pemilik: this.pemilikAntrean ?? undefined }
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      this.enqueueOffline(item)
+      throw new OfflineError()
+    }
+    try {
+      return await post<ClockResult>('/attendance/clock', { ...this.clockBody(sub), idempotencyKey: item.idempotencyKey })
+    } catch (e) {
+      if (e instanceof TypeError) {
+        this.enqueueOffline(item)
+        throw new OfflineError()
+      }
+      throw e
+    }
   }
   private clockBody(sub: ClockSubmission) {
     return {
@@ -163,14 +195,14 @@ class Api {
 
   // ---- Requests ----
   listLeaves(_companyId?: string, employeeId?: string) { return req<Array<LeaveRequest & { name: string }>>(`/leaves${employeeId ? '?mine=1' : ''}`) }
-  listOvertimes(_companyId?: string, employeeId?: string) { return req<Array<OvertimeRequest & { name: string }>>(`/overtimes${employeeId ? '?mine=1' : ''}`) }
+  listOvertimes(_companyId?: string, employeeId?: string) { return req<Array<OvertimeRequest & { name: string; isDraft?: boolean }>>(`/overtimes${employeeId ? '?mine=1' : ''}`) }
   createLeave(input: { companyId?: string; employeeId?: string; type: LeaveType; dateStart: string; dateEnd: string; reason?: string; attachmentName?: string }) {
     return post<LeaveRequest>('/leaves', { type: input.type, dateStart: input.dateStart, dateEnd: input.dateEnd, reason: input.reason, attachmentName: input.attachmentName })
   }
   createOvertime(input: { companyId?: string; employeeId?: string; workDate: string; hours: number; dayType: DayType }) {
     return post<OvertimeRequest>('/overtimes', { workDate: input.workDate, hours: input.hours, dayType: input.dayType })
   }
-  pendingApprovals(_companyId?: string, _scope?: string[]) { return req<{ leaves: Array<LeaveRequest & { name: string }>; overtimes: Array<OvertimeRequest & { name: string }> }>('/approvals/pending') }
+  pendingApprovals(_companyId?: string, _scope?: string[]) { return req<{ leaves: Array<LeaveRequest & { name: string }>; overtimes: Array<OvertimeRequest & { name: string; isDraft?: boolean }> }>('/approvals/pending') }
   decideLeave(_companyId: string | undefined, id: string, status: RequestStatus, _approverId?: string) { return post<LeaveRequest>(`/leaves/${id}/decision`, { status }) }
   decideOvertime(_companyId: string | undefined, id: string, status: RequestStatus, _approverId?: string) { return post<OvertimeRequest>(`/overtimes/${id}/decision`, { status }) }
 
@@ -188,23 +220,98 @@ class Api {
   createMcp(input: { agentName: string; scopes: string[]; scopeBranchIds?: string[] }) { return post<McpConnection & { accessToken: string }>('/mcp/connections', input) }
   revokeMcp(_companyId: string | undefined, id: string) { return del(`/mcp/connections/${id}`) }
 
-  // ---- Offline queue (client-side) ----
-  enqueueOffline(sub: ClockSubmission) {
-    const q = this.readQueue()
-    q.push({ ...sub, queuedAt: new Date().toISOString() })
-    localStorage.setItem(QUEUE_KEY, JSON.stringify(q))
-  }
-  readQueue(): Array<ClockSubmission & { queuedAt: string }> {
-    try { return JSON.parse(localStorage.getItem(QUEUE_KEY) ?? '[]') } catch { return [] }
-  }
-  async flushQueue(): Promise<number> {
-    if (!this.online) return 0
-    const q = this.readQueue()
-    for (const item of q) {
-      try { await post('/attendance/clock', { ...this.clockBody(item), idempotencyKey: uid() }) } catch { /* keep going */ }
+  // ---- Antrean offline (sisi klien) ----
+  private writeQueue(q: ItemAntrean[]) {
+    try {
+      localStorage.setItem(QUEUE_KEY, JSON.stringify(q))
+    } catch {
+      // Penyimpanan penuh: buang foto dari item terbaru dulu, absennya tetap terkirim.
+      const ringan = q.map((it) => (it.photoData ? { ...it, photoData: undefined, fotoDilepas: true } : it))
+      try { localStorage.setItem(QUEUE_KEY, JSON.stringify(ringan)) } catch { /* tetap gagal: biarkan */ }
     }
-    localStorage.setItem(QUEUE_KEY, '[]')
-    return q.length
+    if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('absentra:antrean'))
+  }
+  enqueueOffline(item: ItemAntrean) {
+    const q = this.readQueue()
+    if (!q.some((x) => x.idempotencyKey === item.idempotencyKey)) q.push(item)
+    this.writeQueue(q)
+  }
+  private pemilikAntrean: string | null = null
+  /** Dipanggil saat akun/usaha aktif diketahui (useActor). null = belum masuk. */
+  setPemilikAntrean(kunci: string | null) {
+    if (this.pemilikAntrean === kunci) return
+    this.pemilikAntrean = kunci
+    // Dipanggil saat render useActor: kabari pendengar sesudahnya, bukan di tengah render.
+    if (typeof window !== 'undefined') queueMicrotask(() => window.dispatchEvent(new CustomEvent('absentra:antrean')))
+  }
+  /** Antrean milik akun + usaha yang sedang aktif saja. */
+  antreanSaya(): ItemAntrean[] {
+    const p = this.pemilikAntrean
+    return p ? this.readQueue().filter((x) => x.pemilik === p) : []
+  }
+  private buangDariAntrean(kunci: string) {
+    this.writeQueue(this.readQueue().filter((x) => x.idempotencyKey !== kunci))
+  }
+  readQueue(): ItemAntrean[] {
+    try {
+      const raw = JSON.parse(localStorage.getItem(QUEUE_KEY) ?? '[]')
+      return Array.isArray(raw) ? raw.filter((x) => x && typeof x.idempotencyKey === 'string') : []
+    } catch { return [] }
+  }
+  private sedangMengirim = false
+  /**
+   * Kirim antrean milik akun aktif satu per satu (antrean dibaca ulang tiap langkah,
+   * jadi absen yang masuk antrean selagi mengirim tidak tertimpa).
+   * - Berhasil → dibuang.
+   * - Foto ditolak (400 photo_*) → dikirim ulang tanpa foto.
+   * - Sesi habis (401) / belum setuju lokasi (403 consent_required) → disimpan, berhenti.
+   * - Ditolak final (4xx lain selain 408/429) → dibuang dan dilaporkan.
+   * - Jaringan / 5xx → disimpan, dicoba lagi nanti.
+   */
+  async flushQueue(): Promise<HasilKirimAntrean> {
+    const hasil: HasilKirimAntrean = { terkirim: 0, ditolak: [], tersisa: 0 }
+    if (this.sedangMengirim || !this.pemilikAntrean || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
+      return { ...hasil, tersisa: this.antreanSaya().length }
+    }
+    this.sedangMengirim = true
+    try {
+      let berhenti = false
+      for (const item of this.antreanSaya()) {
+        let kirim: ItemAntrean = item
+        for (let coba = 0; coba < 2; coba++) {
+          try {
+            await post('/attendance/clock', {
+              ...this.clockBody(kirim),
+              idempotencyKey: item.idempotencyKey,
+              eventTimeClient: item.eventTimeClient,
+              submittedOffline: true,
+            })
+            hasil.terkirim++
+            this.buangDariAntrean(item.idempotencyKey)
+            break
+          } catch (e) {
+            const kode = e instanceof ApiError && typeof e.body?.error === 'string' ? e.body.error : e instanceof ApiError ? `http_${e.status}` : ''
+            if (e instanceof ApiError && e.status === 400 && kirim.photoData && kode.startsWith('photo_')) {
+              kirim = { ...kirim, photoData: undefined, fotoDilepas: true }
+              continue
+            }
+            if (e instanceof ApiError && (e.status === 401 || (e.status === 403 && kode === 'consent_required'))) { berhenti = true; break }
+            if (e instanceof ApiError && e.status >= 400 && e.status < 500 && e.status !== 408 && e.status !== 429) {
+              hasil.ditolak.push(kode)
+              this.buangDariAntrean(item.idempotencyKey)
+              break
+            }
+            berhenti = true // jaringan/server bermasalah: coba lagi nanti
+            break
+          }
+        }
+        if (berhenti) break
+      }
+      hasil.tersisa = this.antreanSaya().length
+      return hasil
+    } finally {
+      this.sedangMengirim = false
+    }
   }
 }
 

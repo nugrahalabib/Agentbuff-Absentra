@@ -11,7 +11,10 @@ export const HOURS_DIVISOR = 173 // 40h/wk × 52 ÷ 12 (PRD §2.4.1)
 
 /**
  * Hourly wage. Basis = basic wage + fixed allowance (100%).
- * If variable allowances are folded in, regulation uses a 75% basis.
+ * If variable allowances are folded in, regulation uses 75% of the total wage
+ * — but only when that is HIGHER than basic + fixed (PP 35/2021 Art. 31(3);
+ * the basis is never allowed to drop below basic + fixed at 100%, i.e. the
+ * value better for the employee always wins).
  */
 export function hourlyWage(opts: {
   wageBasic: number
@@ -20,9 +23,10 @@ export function hourlyWage(opts: {
   includeVariable?: boolean
 }): number {
   const { wageBasic, wageFixedAllowance, wageVariableAllowance = 0, includeVariable = false } = opts
+  const fixedBasis = wageBasic + wageFixedAllowance
   const base = includeVariable
-    ? (wageBasic + wageFixedAllowance + wageVariableAllowance) * 0.75
-    : wageBasic + wageFixedAllowance
+    ? Math.max((wageBasic + wageFixedAllowance + wageVariableAllowance) * 0.75, fixedBasis)
+    : fixedBasis
   return base / HOURS_DIVISOR
 }
 
@@ -141,6 +145,24 @@ export interface OvertimeBlock {
   dayType: DayType
 }
 
+/**
+ * PP 35/2021 multipliers apply to the overtime hours of a WORK DAY, not to each
+ * request separately: two approved 1-hour requests on the same workday are hour
+ * 1 (1.5×) and hour 2 (2×), never 1.5× twice. Blocks are therefore summed per
+ * (workDate, dayType) before any tier is applied. Output is sorted by date.
+ */
+export function groupOvertimeByDay(blocks: OvertimeBlock[]): OvertimeBlock[] {
+  const byKey = new Map<string, OvertimeBlock>()
+  for (const b of blocks) {
+    if (!(b.hours > 0)) continue
+    const key = `${b.workDate}|${b.dayType}`
+    const cur = byKey.get(key)
+    if (cur) cur.hours = round2(cur.hours + b.hours)
+    else byKey.set(key, { workDate: b.workDate, dayType: b.dayType, hours: round2(b.hours) })
+  }
+  return [...byKey.values()].sort((a, b) => (a.workDate < b.workDate ? -1 : a.workDate > b.workDate ? 1 : 0))
+}
+
 export interface PayrollInput {
   employeeId: string
   name: string
@@ -193,12 +215,14 @@ export function computeRecapRow(input: PayrollInput): PayrollRecapRow {
   })
   const hw = Math.round(hwExact) // whole Rupiah
 
-  const overtimeLines: OvertimeLine[] = input.overtimeBlocks.map((b) => ({
+  // Tiers are per work day (see groupOvertimeByDay), so lines are per day too.
+  const dailyBlocks = groupOvertimeByDay(input.overtimeBlocks)
+  const overtimeLines: OvertimeLine[] = dailyBlocks.map((b) => ({
     ...b,
     pay: roundRp(overtimePay({ hours: b.hours, hourlyWage: hw, dayType: b.dayType, workweek: input.workweek })),
   }))
 
-  const overtimeHoursTotal = round2(input.overtimeBlocks.reduce((s, b) => s + b.hours, 0))
+  const overtimeHoursTotal = round2(dailyBlocks.reduce((s, b) => s + b.hours, 0))
   const overtimePayTotal = roundRp(overtimeLines.reduce((s, l) => s + l.pay, 0))
 
   return {
@@ -211,7 +235,7 @@ export function computeRecapRow(input: PayrollInput): PayrollRecapRow {
     leaveDays: input.leaveDays,
     lateDeduction: roundRp(lateDeduction(input.lateMinutesTotal, input.policy)),
     mealAllowance: roundRp(
-      mealAllowance({ presentDays: input.presentDays, overtimeBlocks: input.overtimeBlocks, policy: input.policy }),
+      mealAllowance({ presentDays: input.presentDays, overtimeBlocks: dailyBlocks, policy: input.policy }),
     ),
     overtimeLines,
     overtimeHoursTotal,

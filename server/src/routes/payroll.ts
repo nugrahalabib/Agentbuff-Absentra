@@ -1,22 +1,14 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { db } from '../lib/db.js'
-import { mapPolicy } from '../lib/map.js'
 import { requireCompany, requireCap } from '../lib/context.js'
-import { computeRecapRow, type OvertimeBlock } from '../domain/payroll.js'
+import { computeRecapRow } from '../domain/payroll.js'
 import { audit } from '../lib/audit.js'
+import { isoDate, rejectBadRange } from '../lib/validate.js'
+import { daysBetween } from '../lib/tenantTime.js'
+import { employeePeriodData, payrollRows } from '../lib/payrollInput.js'
 
 export const payrollRouter = Router()
-
-function daysBetween(startISO: string, endISO: string): string[] {
-  const out: string[] = []
-  const [sy, sm, sd] = startISO.split('-').map(Number)
-  const [ey, em, ed] = endISO.split('-').map(Number)
-  const d = new Date(Date.UTC(sy, sm - 1, sd))
-  const end = new Date(Date.UTC(ey, em - 1, ed))
-  while (d <= end) { out.push(d.toISOString().slice(0, 10)); d.setUTCDate(d.getUTCDate() + 1) }
-  return out
-}
 
 const LEAVE_LABEL: Record<string, string> = {
   tahunan: 'Cuti tahunan',
@@ -27,41 +19,16 @@ const LEAVE_LABEL: Record<string, string> = {
 
 /** Payroll recap (PP 35/2021 engine). Produces a payroll-READY recap, never disburses (NG2). */
 payrollRouter.post('/reports/payroll', requireCompany, requireCap('report.payroll.generate'), (req, res) => {
-  const body = z.object({ periodStart: z.string(), periodEnd: z.string(), branchId: z.string().optional() }).parse(req.body)
+  const body = z.object({ periodStart: isoDate, periodEnd: isoDate, branchId: z.string().optional() }).parse(req.body)
+  if (rejectBadRange(res, body.periodStart, body.periodEnd)) return
   const cid = req.ctx!.companyId!
-  const company = db.prepare('SELECT * FROM company WHERE id=?').get(cid) as any
-  const policy = mapPolicy(db.prepare('SELECT * FROM policy WHERE company_id=?').get(cid))
   const scope = req.ctx!.actor!.membership.scopeBranchIds
-  const period = new Set(daysBetween(body.periodStart, body.periodEnd))
 
   let emps = db.prepare('SELECT * FROM employee_profile WHERE company_id=?').all(cid) as any[]
   if (body.branchId) emps = emps.filter((e) => e.branch_id === body.branchId)
   if (scope.length) emps = emps.filter((e) => scope.includes(e.branch_id))
 
-  const rows = emps.map((e) => {
-    const recs = (db.prepare('SELECT * FROM attendance_record WHERE company_id=? AND employee_id=?').all(cid, e.id) as any[]).filter((r) => period.has(r.work_date))
-    const presentDays = recs.length
-    const lateMinutesTotal = recs.reduce((s, r) => s + r.late_minutes, 0)
-    const assigned = (db.prepare('SELECT * FROM shift_assignment WHERE company_id=? AND employee_id=?').all(cid, e.id) as any[]).filter((a) => period.has(a.work_date))
-    const recordedDates = new Set(recs.map((r) => r.work_date))
-    const approvedLeaveDates = new Set(
-      (db.prepare(`SELECT * FROM leave_request WHERE company_id=? AND employee_id=? AND status='approved'`).all(cid, e.id) as any[])
-        .flatMap((l) => daysBetween(l.date_start, l.date_end)),
-    )
-    const absentDays = assigned.filter((a) => !recordedDates.has(a.work_date) && !approvedLeaveDates.has(a.work_date)).length
-    const leaveDays = [...approvedLeaveDates].filter((d) => period.has(d)).length
-    const overtimeBlocks: OvertimeBlock[] = (db.prepare(`SELECT * FROM overtime_request WHERE company_id=? AND employee_id=? AND status='approved'`).all(cid, e.id) as any[])
-      .filter((o) => period.has(o.work_date))
-      .map((o) => ({ workDate: o.work_date, hours: o.hours, dayType: o.day_type }))
-
-    return computeRecapRow({
-      employeeId: e.id, name: e.name,
-      wageBasic: e.wage_basic, wageFixedAllowance: e.wage_fixed_allowance, wageVariableAllowance: e.wage_variable_allowance,
-      includeVariable: e.wage_variable_allowance > 0,
-      workweek: company.workweek_type,
-      presentDays, lateMinutesTotal, absentDays, leaveDays, overtimeBlocks, policy,
-    })
-  })
+  const rows = payrollRows(cid, emps, body.periodStart, body.periodEnd)
   audit({ companyId: cid, actorType: 'user', actorId: req.ctx!.userId, action: 'report.payroll.generate', metadata: { period: `${body.periodStart}..${body.periodEnd}`, rows: rows.length } })
   res.json(rows)
 })
@@ -71,11 +38,8 @@ payrollRouter.post('/reports/payroll', requireCompany, requireCap('report.payrol
  * Single source for UI print/CSV and MCP.
  */
 payrollRouter.get('/reports/employee', requireCompany, requireCap('report.export'), (req, res) => {
-  const q = z.object({
-    employeeId: z.string().min(1),
-    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  }).parse(req.query)
+  const q = z.object({ employeeId: z.string().min(1), from: isoDate, to: isoDate }).parse(req.query)
+  if (rejectBadRange(res, q.from, q.to)) return
 
   const cid = req.ctx!.companyId!
   const company = db.prepare('SELECT * FROM company WHERE id=?').get(cid) as any
@@ -89,79 +53,39 @@ payrollRouter.get('/reports/employee', requireCompany, requireCap('report.export
   const division = emp.division_id
     ? db.prepare('SELECT * FROM division WHERE id=? AND company_id=?').get(emp.division_id, cid) as any
     : null
-  const policy = mapPolicy(db.prepare('SELECT * FROM policy WHERE company_id=?').get(cid))
-  const period = new Set(daysBetween(q.from, q.to))
-  const periodDays = daysBetween(q.from, q.to)
 
-  const recs = (db.prepare('SELECT * FROM attendance_record WHERE company_id=? AND employee_id=?').all(cid, emp.id) as any[])
-    .filter((r) => period.has(r.work_date))
-  const recByDate = new Map(recs.map((r) => [r.work_date, r]))
+  const data = employeePeriodData(cid, emp, q.from, q.to)
+  const summaryRow = computeRecapRow(data.input)
+  const recByDate = new Map(data.recs.map((r) => [r.work_date, r]))
+  const assignByDate = new Map(data.assigned.map((a) => [a.work_date, a]))
+  const templates = new Map((db.prepare('SELECT * FROM shift_template WHERE company_id=?').all(cid) as any[]).map((t) => [t.id, t]))
+  const otHoursByDate = new Map<string, number>()
+  for (const o of data.countedOvertime) otHoursByDate.set(o.work_date, Math.round(((otHoursByDate.get(o.work_date) ?? 0) + o.hours) * 100) / 100)
 
-  const assigned = (db.prepare('SELECT * FROM shift_assignment WHERE company_id=? AND employee_id=?').all(cid, emp.id) as any[])
-    .filter((a) => period.has(a.work_date))
-  const assignByDate = new Map(assigned.map((a) => [a.work_date, a]))
-  const templates = new Map(
-    (db.prepare('SELECT * FROM shift_template WHERE company_id=?').all(cid) as any[]).map((t) => [t.id, t]),
-  )
-
-  const leaves = (db.prepare(`SELECT * FROM leave_request WHERE company_id=? AND employee_id=? AND status='approved'`).all(cid, emp.id) as any[])
-    .filter((l) => daysBetween(l.date_start, l.date_end).some((d) => period.has(d)))
-  const leaveByDate = new Map<string, { type: string; reason: string | null }>()
-  for (const l of leaves) {
-    for (const d of daysBetween(l.date_start, l.date_end)) {
-      if (period.has(d)) leaveByDate.set(d, { type: l.type, reason: l.reason })
-    }
-  }
-
-  const ots = (db.prepare(`SELECT * FROM overtime_request WHERE company_id=? AND employee_id=? AND status='approved'`).all(cid, emp.id) as any[])
-    .filter((o) => period.has(o.work_date))
-  const otByDate = new Map(ots.map((o) => [o.work_date, o]))
-
-  const recordedDates = new Set(recs.map((r) => r.work_date))
-  const approvedLeaveDates = new Set(leaveByDate.keys())
-  const absentDays = assigned.filter((a) => !recordedDates.has(a.work_date) && !approvedLeaveDates.has(a.work_date)).length
-  const lateDays = recs.filter((r) => r.status === 'late' || r.late_minutes > 0).length
-  const earlyLeaveDays = recs.filter((r) => r.left_early).length
-
+  const lateDays = data.presentRecs.filter((r) => r.status === 'late' || r.late_minutes > 0).length
+  const earlyLeaveDays = data.presentRecs.filter((r) => r.left_early).length
   const leaveBreakdown: Record<string, number> = {}
-  for (const { type } of leaveByDate.values()) {
-    leaveBreakdown[type] = (leaveBreakdown[type] ?? 0) + 1
-  }
+  for (const { type } of data.leaveByDate.values()) leaveBreakdown[type] = (leaveBreakdown[type] ?? 0) + 1
 
-  const overtimeBlocks: OvertimeBlock[] = ots.map((o) => ({
-    workDate: o.work_date, hours: o.hours, dayType: o.day_type,
-  }))
-
-  const summaryRow = computeRecapRow({
-    employeeId: emp.id, name: emp.name,
-    wageBasic: emp.wage_basic, wageFixedAllowance: emp.wage_fixed_allowance, wageVariableAllowance: emp.wage_variable_allowance,
-    includeVariable: emp.wage_variable_allowance > 0,
-    workweek: company.workweek_type,
-    presentDays: recs.length,
-    lateMinutesTotal: recs.reduce((s, r) => s + r.late_minutes, 0),
-    absentDays,
-    leaveDays: approvedLeaveDates.size,
-    overtimeBlocks,
-    policy,
-  })
-
-  const days = periodDays.map((date) => {
+  const days = daysBetween(q.from, q.to).map((date) => {
     const rec = recByDate.get(date)
     const asg = assignByDate.get(date)
     const tmpl = asg ? templates.get(asg.shift_template_id) : null
-    const leave = leaveByDate.get(date)
-    const ot = otByDate.get(date)
+    const leave = data.leaveByDate.get(date)
+    const otHours = otHoursByDate.get(date)
+    const absent = data.absentDates.has(date)
     const notes: string[] = []
     if (leave) notes.push(LEAVE_LABEL[leave.type] ?? leave.type)
-    if (ot) notes.push(`Lembur ${ot.hours} jam`)
+    if (otHours != null) notes.push(`Lembur ${otHours} jam`)
     if (rec?.left_early) notes.push('Pulang cepat')
-    if (!rec && asg && !leave) notes.push('Alpa')
+    if (absent) notes.push('Alpa')
 
     let status = '—'
     if (leave) status = LEAVE_LABEL[leave.type] ?? leave.type
-    else if (rec) status = rec.status === 'on_time' ? 'Tepat waktu' : rec.status === 'late' ? 'Terlambat' : 'Tidak hadir'
-    else if (asg) status = 'Alpa'
-    else if (ot) status = 'Lembur'
+    else if (rec && rec.status !== 'absent') status = rec.status === 'on_time' ? 'Tepat waktu' : 'Terlambat'
+    else if (absent) status = 'Alpa'
+    else if (asg) status = 'Terjadwal'
+    else if (otHours != null) status = 'Lembur'
 
     return {
       date,
@@ -175,10 +99,10 @@ payrollRouter.get('/reports/employee', requireCompany, requireCap('report.export
       trustScore: rec?.trust_score ?? null,
       leftEarly: !!rec?.left_early,
       leaveType: leave?.type ?? null,
-      overtimeHours: ot?.hours ?? null,
+      overtimeHours: otHours ?? null,
       note: notes.join(' · ') || null,
     }
-  }).filter((d) => d.clockInAt || d.leaveType || d.overtimeHours != null || assignByDate.has(d.date))
+  }).filter((d) => d.clockInAt || d.leaveType || d.overtimeHours != null || assignByDate.has(d.date) || recByDate.has(d.date))
 
   audit({
     companyId: cid, actorType: 'user', actorId: req.ctx!.userId,

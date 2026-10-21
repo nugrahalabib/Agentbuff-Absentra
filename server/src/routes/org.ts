@@ -30,7 +30,7 @@ orgRouter.post('/branches', requireCompany, requireCap('branch.manage'), (req, r
   const body = z.object({
     name: z.string().min(1),
     address: z.string().optional(),
-    lat: z.number(), long: z.number(),
+    lat: z.number().min(-90).max(90), long: z.number().min(-180).max(180),
     radiusM: z.number().positive().max(5000).default(100),
     bufferM: z.number().nonnegative().max(2000).default(50),
     polygon: z.array(z.object({ lat: z.number(), long: z.number() })).min(3).optional(),
@@ -54,7 +54,7 @@ orgRouter.post('/branches', requireCompany, requireCap('branch.manage'), (req, r
 orgRouter.patch('/branches/:id', requireCompany, requireCap('branch.manage'), (req, res) => {
   const body = z.object({
     name: z.string().min(1).optional(), address: z.string().optional(),
-    lat: z.number().optional(), long: z.number().optional(),
+    lat: z.number().min(-90).max(90).optional(), long: z.number().min(-180).max(180).optional(),
     radiusM: z.number().positive().max(5000).optional(), bufferM: z.number().nonnegative().max(2000).optional(),
   }).parse(req.body)
   const cid = req.ctx!.companyId!
@@ -63,7 +63,7 @@ orgRouter.patch('/branches/:id', requireCompany, requireCap('branch.manage'), (r
   db.prepare('UPDATE branch SET name=?, address=?, lat=?, long=? WHERE id=?').run(
     body.name ?? cur.name, body.address ?? cur.address, body.lat ?? cur.lat, body.long ?? cur.long, cur.id,
   )
-  const g = db.prepare('SELECT * FROM geofence WHERE branch_id = ?').get(cur.id) as any
+  const g = db.prepare('SELECT * FROM geofence WHERE branch_id = ? AND company_id = ?').get(cur.id, cid) as any
   if (g) {
     db.prepare('UPDATE geofence SET center_lat=?, center_long=?, radius_m=?, buffer_m=? WHERE id=?').run(
       body.lat ?? g.center_lat, body.long ?? g.center_long, body.radiusM ?? g.radius_m, body.bufferM ?? g.buffer_m, g.id,
@@ -100,8 +100,10 @@ orgRouter.post('/divisions', requireCompany, requireCap('division.manage'), (req
 orgRouter.patch('/divisions/:id', requireCompany, requireCap('division.manage'), (req, res) => {
   const body = z.object({ name: z.string().min(1) }).parse(req.body)
   const cid = req.ctx!.companyId!
-  db.prepare('UPDATE division SET name=? WHERE id=? AND company_id=?').run(body.name, req.params.id, cid)
-  res.json(mapDivision(db.prepare('SELECT * FROM division WHERE id = ?').get(req.params.id)))
+  const r = db.prepare('UPDATE division SET name=? WHERE id=? AND company_id=?').run(body.name, req.params.id, cid)
+  if (r.changes === 0) return res.status(404).json({ error: 'not_found' })
+  audit({ companyId: cid, actorType: 'user', actorId: req.ctx!.userId, action: 'division.update', target: req.params.id })
+  res.json(mapDivision(db.prepare('SELECT * FROM division WHERE id = ? AND company_id = ?').get(req.params.id, cid)))
 })
 
 orgRouter.delete('/divisions/:id', requireCompany, requireCap('division.manage'), (req, res) => {

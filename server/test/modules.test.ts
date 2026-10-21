@@ -12,7 +12,8 @@ import type { Express } from 'express'
 
 let app: Express
 const agent = () => request.agent(app)
-const signin = (a: any, email: string) => a.post('/api/auth/signin').send({ email, name: email.split('@')[0], register: true })
+const PW = (email: string) => `Rahasia-${email}`
+const signin = (a: any, email: string) => a.post('/api/auth/signin').send({ email, name: email.split('@')[0], register: true, password: PW(email) })
 const TODAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date())
 const addDays = (iso: string, d: number) => { const [y, m, dd] = iso.split('-').map(Number); const x = new Date(Date.UTC(y, m - 1, dd)); x.setUTCDate(x.getUTCDate() + d); return x.toISOString().slice(0, 10) }
 const getCookie = (res: any, name: string): string | null => {
@@ -30,6 +31,8 @@ beforeAll(async () => {
   const dir = mkdtempSync(join(tmpdir(), 'absentra-mod-'))
   process.env.ABSENTRA_DB = join(dir, 'test.db')
   process.env.PASSWORD_AUTH_ALLOWLIST = '*'
+  process.env.ABSENTRA_RATE_LIMIT_DISABLED = '1'
+  process.env.SSO_BRIDGE_OPERATOR_SECRET = 'operator-uji'
   app = (await import('../src/app.js')).createApp()
 
   owner = agent(); await signin(owner, 'owner@m.test')
@@ -42,6 +45,7 @@ beforeAll(async () => {
   await owner.post('/api/employees').send({ name: 'Budi Dua', email: 'budi2@m.test', branchId: branchA1 })
   await owner.post('/api/shift-assignments').send({ employeeIds: [empAndi], shiftTemplateId: shiftPagi, dateStart: TODAY, skipSundays: false })
   andi = agent(); await signin(andi, 'andi@m.test')
+  await andi.post('/api/me/consent').send({ consentLocation: true, consentPhoto: false })
 
   const r1 = await owner.post('/api/mcp/connections').send({ agentName: 'Reader', scopes: ['attendance:read'] })
   connReadToken = r1.body.accessToken; mcpReadId = r1.body.id
@@ -55,11 +59,17 @@ beforeAll(async () => {
 
 const rpc = (tokenStr: string, method: string, params?: any) =>
   request(app).post('/mcp').set('Authorization', `Bearer ${tokenStr}`).send({ jsonrpc: '2.0', id: 1, method, params })
+/** Server-enforced 2-step write: preview (gets a token) → same args + confirmationToken. */
+const confirmCall = async (tokenStr: string, name: string, args: any) => {
+  const pre = await rpc(tokenStr, 'tools/call', { name, arguments: args })
+  if (pre.body.result?.status !== 'needs_confirmation') return pre
+  return rpc(tokenStr, 'tools/call', { name, arguments: { ...args, confirmationToken: pre.body.result.confirmationToken } })
+}
 
 // ---------------- UC-04 refresh rotation ----------------
 describe('UC-AB-04 TC-AB-018 rotasi refresh-token', () => {
   it('reuse refresh token yang sudah dirotasi → family dicabut', async () => {
-    const s = await request(app).post('/api/auth/signin').send({ email: 'rt@m.test', register: true })
+    const s = await request(app).post('/api/auth/signin').send({ email: 'rt@m.test', register: true, password: 'Rahasia-rt' })
     const rt0 = getCookie(s, 'absentra_rt')!
     const r1 = await request(app).post('/api/auth/refresh').set('Cookie', `absentra_rt=${rt0}`)
     expect(r1.status).toBe(200)
@@ -77,7 +87,7 @@ describe('UC-AB-02 SSO Gateway', () => {
   beforeAll(async () => {
     const kp = await generateKeyPair('RS256'); priv = kp.privateKey
     const jwk = await exportJWK(kp.publicKey)
-    await owner.post('/api/sso/bridges').send({ issuer: 'https://partner.x', jwks: { keys: [{ ...jwk, kid: 'p1', alg: 'RS256', use: 'sig' }] } })
+    await owner.post('/api/sso/bridges').set('x-operator-secret', 'operator-uji').send({ issuer: 'https://partner.x', jwks: { keys: [{ ...jwk, kid: 'p1', alg: 'RS256', use: 'sig' }] } })
     sign = (claims, exp) => new SignJWT(claims).setProtectedHeader({ alg: 'RS256', kid: 'p1' }).setIssuedAt().setExpirationTime(Math.floor(Date.now() / 1000) + exp).setJti(`jti-${Math.random()}`).sign(priv)
   })
   it('TC-AB-007 assertion valid + issuer allowlist → sesi', async () => {
@@ -114,7 +124,8 @@ describe('UC-AB-02 SSO Gateway', () => {
 describe('UC-AB-33/34/35 MCP server', () => {
   it('TC-AB-143 attendance.recap (scope read) ter-scope tenant', async () => {
     const r = await rpc(connReadToken, 'tools/call', { name: 'attendance.recap', arguments: { periodStart: addDays(TODAY, -7), periodEnd: TODAY, branchId: branchA1 } })
-    expect(r.body.result.content.some((c: any) => c.name === 'Andi')).toBe(true)
+    expect(r.body.result.recap.some((c: any) => c.name === 'Andi')).toBe(true)
+    expect(r.body.result.content[0].type).toBe('text') // MCP content never clobbered by tool data
   })
   it('TC-AB-145 scope tidak cukup → ditolak', async () => {
     const r = await rpc(connReadToken, 'tools/call', { name: 'shift.assign', arguments: { employeeRef: 'Andi', shiftTemplate: 'Pagi', date: TODAY } })
@@ -131,7 +142,9 @@ describe('UC-AB-33/34/35 MCP server', () => {
     expect(after.body.length).toBe(0) // TC-155: tanpa konfirmasi tidak ada perubahan
   })
   it('TC-AB-144 shift.assign dengan konfirmasi → ditambah + audit', async () => {
-    const r = await rpc(connWriteToken, 'tools/call', { name: 'shift.assign', arguments: { employeeRef: 'Andi', shiftTemplate: 'Pagi', date: addDays(TODAY, 4), confirm: true } })
+    const self = await rpc(connWriteToken, 'tools/call', { name: 'shift.assign', arguments: { employeeRef: 'Andi', shiftTemplate: 'Pagi', date: addDays(TODAY, 4), confirm: true } })
+    expect(self.body.result.status).toBe('needs_confirmation') // confirm:true alone never executes
+    const r = await confirmCall(connWriteToken, 'shift.assign', { employeeRef: 'Andi', shiftTemplate: 'Pagi', date: addDays(TODAY, 4) })
     expect(r.body.result.status).toBe('assigned')
     const agentAudit = (await owner.get('/api/audit?actorType=agent')).body
     expect(agentAudit.some((x: any) => x.action === 'mcp.shift.assign')).toBe(true) // TC-150
@@ -142,7 +155,7 @@ describe('UC-AB-33/34/35 MCP server', () => {
   })
   it('TC-AB-149 token tenant B tak melihat data tenant A', async () => {
     const r = await rpc(connBToken, 'tools/call', { name: 'attendance.recap', arguments: { periodStart: addDays(TODAY, -7), periodEnd: TODAY } })
-    expect(r.body.result.content.some((c: any) => c.name === 'Andi')).toBe(false)
+    expect(r.body.result.recap.some((c: any) => c.name === 'Andi')).toBe(false)
   })
   it('TC-AB-152 resources/read policy (tenant sendiri) ok', async () => {
     const r = await rpc(connReadToken, 'resources/read', { uri: `absentra://company/${cidA}/policy` })
@@ -212,11 +225,11 @@ describe('Fitur tambahan', () => {
     await owner.post('/api/shift-assignments').send({ employeeIds: [eid], shiftTemplateId: shiftPagi, dateStart: TODAY, skipSundays: false })
     await e.post('/api/attendance/clock').send({ kind: 'in', lat: -6.2, long: 106.8166, gpsAccuracyM: 15, livenessPassed: true, cameraAvailable: true, geofenceResult: 'inside', idempotencyKey: 'trv-in-1' })
     const out = await e.post('/api/attendance/clock').send({ kind: 'out', lat: -8.65, long: 115.21, gpsAccuracyM: 15, livenessPassed: true, cameraAvailable: true, geofenceResult: 'outside', idempotencyKey: 'trv-out-1' })
-    expect(out.body.reasons.some((r: string) => /impossible/i.test(r))).toBe(true)
+    expect(out.body.reasons).toContain('Pindah tempat terlalu cepat dari absen sebelumnya')
   })
   it('TC-AB-099 lengkapi clock-out yang hilang', async () => {
     const rec = (await owner.get('/api/attendance/feed')).body[0]
-    const r = await owner.post(`/api/attendance/${rec.id}/correct`).send({ clockOutAt: `${TODAY}T10:00:00.000Z`, reason: 'lengkapi clock-out' })
+    const r = await owner.post(`/api/attendance/${rec.id}/correct`).send({ clockOutAt: new Date(Date.now() + 60_000).toISOString(), reason: 'lengkapi clock-out' })
     expect(r.status).toBe(200)
   })
   it('TC-AB-105 tolak cuti dengan alasan tersimpan', async () => {
@@ -300,7 +313,7 @@ describe('Fitur tambahan', () => {
     await e.post(`/api/invites/token/${inv.token}/accept`).send({ consentLocation: true, consentPhoto: true })
     const eid = (await e.get('/api/auth/me')).body.employeeId
     await owner.post('/api/shift-assignments').send({ employeeIds: [eid], shiftTemplateId: shiftPagi, dateStart: TODAY, skipSundays: false })
-    const r = await e.post('/api/attendance/clock').send({ kind: 'in', lat: -6.2, long: 106.8166, gpsAccuracyM: 15, livenessPassed: true, cameraAvailable: true, geofenceResult: 'inside', idempotencyKey: 'off-in-1', submittedOffline: true, eventTimeClient: `${TODAY}T01:00:00.000Z` })
+    const r = await e.post('/api/attendance/clock').send({ kind: 'in', lat: -6.2, long: 106.8166, gpsAccuracyM: 15, livenessPassed: true, cameraAvailable: true, geofenceResult: 'inside', idempotencyKey: 'off-in-1', submittedOffline: true, eventTimeClient: new Date(Date.now() - 3600_000).toISOString() })
     expect(r.status).toBe(200)
   })
 })
@@ -361,13 +374,13 @@ describe('UC-AB-33/34/35 MCP paritas penuh', () => {
   it('division.create: tanpa confirm → needs_confirmation; dgn confirm → dibuat + audit', async () => {
     const pre = await rpc(full, 'tools/call', { name: 'division.create', arguments: { name: 'Gudang' } })
     expect(pre.body.result.status).toBe('needs_confirmation')
-    const post = await rpc(full, 'tools/call', { name: 'division.create', arguments: { name: 'Gudang', confirm: true } })
+    const post = await rpc(full, 'tools/call', { name: 'division.create', arguments: { name: 'Gudang', confirmationToken: pre.body.result.confirmationToken } })
     expect(post.body.result.status).toBe('created')
     expect((await owner.get('/api/divisions')).body.some((d: any) => d.name === 'Gudang')).toBe(true)
     expect((await owner.get('/api/audit?actorType=agent')).body.some((x: any) => x.action === 'mcp.division.create')).toBe(true)
   })
   it('employee.create via MCP (branchRef nama) → muncul di roster', async () => {
-    const r = await rpc(full, 'tools/call', { name: 'employee.create', arguments: { name: 'Citra MCP', email: 'citra.mcp@m.test', branchRef: 'Pusat', confirm: true } })
+    const r = await confirmCall(full, 'employee.create', { name: 'Citra MCP', email: 'citra.mcp@m.test', branchRef: 'Pusat' })
     expect(r.body.result.status).toBe('created')
     expect((await owner.get('/api/employees?q=Citra')).body.some((e: any) => e.name === 'Citra MCP')).toBe(true)
   })
@@ -378,7 +391,7 @@ describe('UC-AB-33/34/35 MCP paritas penuh', () => {
     expect(r.body.result.status).toBe('needs_clarification'); expect(r.body.result.candidates.length).toBe(2)
   })
   it('wage.set via MCP → tersimpan + audit mcp.wage.set', async () => {
-    const r = await rpc(full, 'tools/call', { name: 'wage.set', arguments: { employeeRef: 'Andi', wageBasic: 5_000_000, confirm: true } })
+    const r = await confirmCall(full, 'wage.set', { employeeRef: 'Andi', wageBasic: 5_000_000 })
     expect(r.body.result.status).toBe('updated')
     expect((await owner.get('/api/audit?actorType=agent')).body.some((x: any) => x.action === 'mcp.wage.set')).toBe(true)
   })
@@ -391,15 +404,15 @@ describe('UC-AB-33/34/35 MCP paritas penuh', () => {
     const lv = (await andi.post('/api/leaves').send({ type: 'izin', dateStart: addDays(TODAY, 200), dateEnd: addDays(TODAY, 200) })).body
     const pending = await rpc(full, 'tools/call', { name: 'request.list_pending', arguments: {} })
     expect(pending.body.result.leaves.some((l: any) => l.id === lv.id)).toBe(true)
-    const dec = await rpc(full, 'tools/call', { name: 'leave.decide', arguments: { requestId: lv.id, decision: 'approved', confirm: true } })
+    const dec = await confirmCall(full, 'leave.decide', { requestId: lv.id, decision: 'approved' })
     expect(dec.body.result.status).toBe('approved')
     expect((await owner.get('/api/leaves')).body.find((l: any) => l.id === lv.id).status).toBe('approved')
   })
   it('policy.set via MCP → resources/read mencerminkan perubahan', async () => {
-    await rpc(full, 'tools/call', { name: 'policy.set', arguments: { strictGeofence: true, confirm: true } })
+    await confirmCall(full, 'policy.set', { strictGeofence: true })
     const pol = await rpc(full, 'resources/read', { uri: `absentra://company/${cidA}/policy` })
     expect(JSON.parse(pol.body.result.contents[0].text).strict_geofence).toBe(1)
-    await rpc(full, 'tools/call', { name: 'policy.set', arguments: { strictGeofence: false, confirm: true } })
+    await confirmCall(full, 'policy.set', { strictGeofence: false })
   })
   it('isolasi tenant: token tenant B tak bisa employee.list tenant A (scope juga dibatasi)', async () => {
     // connBToken hanya punya attendance:read → employee.list (employee:read) ditolak scope
@@ -427,7 +440,7 @@ describe('MCP tool tambahan (koreksi, profil, ekspor)', () => {
   it('company.update via MCP → profil berubah (dgn konfirmasi) + audit', async () => {
     const pre = await rpc(tok, 'tools/call', { name: 'company.update', arguments: { businessType: 'Kuliner & Katering' } })
     expect(pre.body.result.status).toBe('needs_confirmation')
-    const r = await rpc(tok, 'tools/call', { name: 'company.update', arguments: { businessType: 'Kuliner & Katering', confirm: true } })
+    const r = await rpc(tok, 'tools/call', { name: 'company.update', arguments: { businessType: 'Kuliner & Katering', confirmationToken: pre.body.result.confirmationToken } })
     expect(r.body.result.status).toBe('updated')
     expect((await owner.get('/api/company')).body.businessType).toBe('Kuliner & Katering')
     expect((await owner.get('/api/audit?actorType=agent')).body.some((x: any) => x.action === 'mcp.company.update')).toBe(true)
@@ -436,7 +449,7 @@ describe('MCP tool tambahan (koreksi, profil, ekspor)', () => {
   it('attendance.correct via MCP → status terkoreksi + audit', async () => {
     const pre = await rpc(tok, 'tools/call', { name: 'attendance.correct', arguments: { recordId: recId, status: 'late', lateMinutes: 5, reason: 'verifikasi manual' } })
     expect(pre.body.result.status).toBe('needs_confirmation')
-    const r = await rpc(tok, 'tools/call', { name: 'attendance.correct', arguments: { recordId: recId, status: 'late', lateMinutes: 5, resolveFlag: true, reason: 'verifikasi manual', confirm: true } })
+    const r = await confirmCall(tok, 'attendance.correct', { recordId: recId, status: 'late', lateMinutes: 5, resolveFlag: true, reason: 'verifikasi manual' })
     expect(r.body.result.status).toBe('corrected')
     expect((await owner.get('/api/audit?actorType=agent')).body.some((x: any) => x.action === 'mcp.attendance.correct')).toBe(true)
   })

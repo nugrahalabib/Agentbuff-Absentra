@@ -1,6 +1,13 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { db, now } from './db.js'
 import { id } from './ids.js'
 import type { ActorType, AuditSource } from '../domain/types.js'
+
+/**
+ * Per-request context (client IP) so every audit entry records where the action
+ * came from without threading `ip` through each call site. Set by app.ts.
+ */
+export const requestContext = new AsyncLocalStorage<{ ip?: string }>()
 
 /** Append-only audit log (PRD §9.4, §7.5.7). PII should be redacted in metadata. */
 export function audit(opts: {
@@ -29,7 +36,7 @@ export function audit(opts: {
     target: opts.target ?? null,
     metadata: redacted ? JSON.stringify(redacted) : null,
     source: opts.source ?? 'ui',
-    ip: opts.ip ?? null,
+    ip: opts.ip ?? requestContext.getStore()?.ip ?? null,
     createdAt: now(),
   })
 }

@@ -2,92 +2,502 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ============================================================
-   Absentra design tokens — see docs/design-system.md
-   Light is the default surface; [data-theme="dark"] swaps values.
-   ============================================================ */
+/* ==========================================================================
+   INTI HIDUP untuk Absentra (rombak Oktober 2026), selaras agentbuff.id.
+   Ivory (kanvas) · graphite (teks & tombol utama) · teal = yang sedang hidup
+   (sudah absen, sedang shift, koneksi aktif) · amber = butuh keputusanmu ·
+   merah = gagal. Aksen khas Absentra = cyan "lencana hadir" dari logo,
+   dipakai sedikit: tombol Absen, momen absen tersimpan, sentuhan merek.
+   Nilai ditulis sebagai kanal RGB supaya `bg-grafit/10` tetap bisa.
+   ========================================================================== */
 :root {
-  --color-primary: #0F766E;
-  --color-primary-pressed: #0B5C55;
-  --color-on-primary: #FFFFFF;
-  --color-accent: #0369A1;
-  --color-success: #15803D;
-  --color-warning: #B45309;
-  --color-danger: #DC2626;
-  --color-surface: #F8FAFC;
-  --color-surface-elevated: #FFFFFF;
-  --color-text: #0F172A;
-  --color-text-muted: #64748B;
-  --color-border: #E2E8F0;
-  --color-focus-ring: #0F766E;
+  color-scheme: light;
+  --kanvas: 244 241 236; /* #F4F1EC */
+  --kanvas-2: 236 232 225; /* #ECE8E1 */
+  --permukaan: 255 255 255;
+  --permukaan-a: 1;
+  --sumur: 118 114 106;
+  --sumur-a: 0.1;
+  --tinta: 27 27 29; /* #1B1B1D */
+  --tinta-2: 85 83 79; /* #55534F */
+  --tinta-3: 95 92 87; /* #5F5C57, sedikit lebih gelap: banyak teks kecil di atas cahaya */
+  --grafit: 28 28 30; /* #1C1C1E */
+  --grafit-teks: 255 255 255;
+  --hitam: 0 0 0;
+  --inti: 22 199 183; /* #16C7B7 cahaya hidup, BUKAN untuk teks */
+  --inti-teks: 8 102 95; /* #08665F */
+  --inti-lembut: 226 244 241; /* #E2F4F1 */
+  --perlu: 138 80 9; /* #8A5009 */
+  --perlu-lembut: 251 239 221; /* #FBEFDD */
+  --galat: 180 35 24; /* #B42318 */
+  --galat-lembut: 253 236 234; /* #FDECEA */
+  --garis: 27 26 24;
+  --garis-a: 0.12;
+  /* Aksen Absentra (hue 180, dari logo). */
+  --aksen: 23 198 201; /* #17C6C9 cahaya */
+  --aksen-terang: 23 198 201;
+  --aksen-isi: 7 118 121; /* #077679 isian tombol, teks putih 5,4:1 */
+  --aksen-isi-teks: 255 255 255;
+  --aksen-teks: 6 103 106; /* #06676A teks di atas ivory 5,9:1 */
+  --aksen-lembut: 221 244 244; /* #DDF4F4 */
+
+  --latar-kaca:
+    radial-gradient(36% 44% at 22% 50%, rgba(23, 198, 201, 0.17), transparent 70%),
+    radial-gradient(34% 40% at 82% 12%, rgba(255, 206, 160, 0.34), transparent 72%),
+    radial-gradient(42% 46% at 88% 90%, rgba(140, 212, 202, 0.3), transparent 72%),
+    radial-gradient(36% 30% at 46% 104%, rgba(255, 232, 206, 0.5), transparent 70%),
+    linear-gradient(180deg, #f6f3ee 0%, #eee9e1 100%);
+  --latar-kaca-hp:
+    radial-gradient(80% 30% at 82% 14%, rgba(23, 198, 201, 0.2), transparent 70%),
+    radial-gradient(70% 26% at 4% 0%, rgba(255, 206, 160, 0.4), transparent 72%),
+    radial-gradient(80% 30% at 0% 58%, rgba(140, 212, 202, 0.3), transparent 72%),
+    radial-gradient(90% 32% at 100% 86%, rgba(255, 210, 170, 0.4), transparent 72%),
+    linear-gradient(180deg, #f3efe8 0%, #eee8df 100%);
+  --kaca-kilau: rgba(255, 255, 255, 0.9);
+  --kaca-garis: rgba(255, 255, 255, 0.62);
+  --kaca-tepi-ubin: rgba(27, 26, 24, 0.07);
+  --kaca-panel: rgba(255, 255, 255, 0.56);
+  --kaca-pekat: rgba(255, 255, 255, 0.94);
+  --kaca-jendela: rgba(255, 255, 255, 0.9);
+  --kaca-jendela-hp: #fbfaf8;
+  --kaca-ubin: rgba(255, 255, 255, 0.62);
+  --kaca-ubin-aktif: rgba(255, 255, 255, 0.97);
+  --kaca-bayang: 0 1px 2px rgba(24, 22, 18, 0.04), 0 30px 70px -12px rgba(24, 22, 18, 0.16);
+  --kaca-pil-isi: rgba(255, 255, 255, 0.64);
+  --kaca-bilah-isi: rgba(246, 243, 238, 0.88);
+  --kaca-bilah-lebar: rgba(246, 243, 238, 0.64);
+  --kaca-kaki-isi: rgba(250, 248, 245, 0.96);
+  --panel-samping-isi: rgba(255, 255, 255, 0.56);
+  --tombol-kaca-isi: rgba(255, 255, 255, 0.7);
+  --tombol-kaca-hover: #ffffff;
+  --isian: rgba(118, 114, 106, 0.08);
+  --isian-tepi: rgba(27, 26, 24, 0.1);
+  --isian-fokus: #ffffff;
+  --isian-cincin: rgba(28, 28, 30, 0.08);
+  --placeholder: rgba(95, 92, 87, 0.72);
+  --tirai: rgba(28, 24, 18, 0.34);
 }
 
+/* Mode gelap: data-theme="dark" di <html> (lib/tema.ts). */
 [data-theme='dark'] {
-  --color-primary: #2DD4BF;
-  --color-primary-pressed: #14B8A6;
-  --color-on-primary: #04201D;
-  --color-accent: #38BDF8;
-  --color-success: #22C55E;
-  --color-warning: #F59E0B;
-  --color-danger: #F87171;
-  --color-surface: #0F172A;
-  --color-surface-elevated: #1E293B;
-  --color-text: #F1F5F9;
-  --color-text-muted: #94A3B8;
-  --color-border: rgba(255, 255, 255, 0.1);
-  --color-focus-ring: #2DD4BF;
+  color-scheme: dark;
+  --kanvas: 14 16 20;
+  --kanvas-2: 32 34 40;
+  --permukaan: 26 28 33;
+  --sumur: 255 255 255;
+  --sumur-a: 0.07;
+  --tinta: 244 241 236;
+  --tinta-2: 208 203 195;
+  --tinta-3: 170 165 157;
+  --grafit: 244 241 236;
+  --grafit-teks: 20 20 19;
+  --hitam: 255 255 255;
+  --inti-teks: 94 234 212;
+  --inti-lembut: 16 52 50;
+  --perlu: 251 191 36;
+  --perlu-lembut: 58 42 14;
+  --galat: 248 113 113;
+  --galat-lembut: 68 24 24;
+  --garis: 255 255 255;
+  --garis-a: 0.1;
+  --aksen: 44 211 214;
+  --aksen-terang: 95 227 229;
+  --aksen-isi: 44 211 214; /* #2CD3D6, teks gelap 9,6:1 */
+  --aksen-isi-teks: 14 26 27;
+  --aksen-teks: 95 227 229; /* #5FE3E5 */
+  --aksen-lembut: 14 56 58;
+
+  --latar-kaca:
+    radial-gradient(36% 44% at 22% 50%, rgba(23, 198, 201, 0.11), transparent 70%),
+    radial-gradient(34% 40% at 82% 12%, rgba(196, 128, 72, 0.13), transparent 72%),
+    radial-gradient(42% 46% at 88% 90%, rgba(22, 150, 140, 0.11), transparent 72%),
+    linear-gradient(180deg, #121419 0%, #0e1014 100%);
+  --latar-kaca-hp:
+    radial-gradient(80% 30% at 82% 14%, rgba(23, 198, 201, 0.13), transparent 70%),
+    radial-gradient(70% 26% at 4% 0%, rgba(196, 128, 72, 0.15), transparent 72%),
+    linear-gradient(180deg, #121419 0%, #0e1014 100%);
+  --kaca-kilau: rgba(255, 255, 255, 0.07);
+  --kaca-garis: rgba(255, 255, 255, 0.06);
+  --kaca-tepi-ubin: rgba(255, 255, 255, 0.09);
+  --kaca-panel: rgba(32, 34, 40, 0.62);
+  --kaca-pekat: rgba(26, 28, 33, 0.97);
+  --kaca-jendela: rgba(28, 30, 36, 0.92);
+  --kaca-jendela-hp: #1c1e24;
+  --kaca-ubin: rgba(255, 255, 255, 0.05);
+  --kaca-ubin-aktif: rgba(255, 255, 255, 0.11);
+  --kaca-bayang: 0 1px 2px rgba(0, 0, 0, 0.3), 0 30px 70px -12px rgba(0, 0, 0, 0.55);
+  --kaca-pil-isi: rgba(255, 255, 255, 0.06);
+  --kaca-bilah-isi: rgba(18, 20, 25, 0.88);
+  --kaca-bilah-lebar: rgba(18, 20, 25, 0.62);
+  --kaca-kaki-isi: rgba(22, 24, 29, 0.96);
+  --panel-samping-isi: rgba(30, 32, 38, 0.62);
+  --tombol-kaca-isi: rgba(255, 255, 255, 0.07);
+  --tombol-kaca-hover: rgba(255, 255, 255, 0.12);
+  --isian: rgba(255, 255, 255, 0.07);
+  --isian-tepi: rgba(255, 255, 255, 0.1);
+  --isian-fokus: rgb(32 34 40);
+  --isian-cincin: rgba(244, 241, 236, 0.12);
+  --placeholder: rgba(170, 165, 157, 0.75);
+  --tirai: rgba(0, 0, 0, 0.55);
 }
 
-html, body, #root {
-  height: 100%;
-}
-
-body {
-  margin: 0;
-  background: var(--color-surface);
-  color: var(--color-text);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
-  font-size: 16px; /* prevents iOS input zoom */
-  -webkit-font-smoothing: antialiased;
-  /* safe-area for notched phones */
-  padding-bottom: env(safe-area-inset-bottom);
-}
-
-/* Visible, accessible focus ring everywhere (WCAG 2.2 §8.8) */
-:focus-visible {
-  outline: 2px solid var(--color-focus-ring);
-  outline-offset: 2px;
-  border-radius: 4px;
-}
-
-/* Respect reduced motion (design-system.md §1) */
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: 0.001ms !important;
-    transition-duration: 0.001ms !important;
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+  body {
+    margin: 0;
+    color: rgb(var(--tinta));
+    font-family: 'Geist Variable', Geist, -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif;
+    font-size: 16px; /* cegah zoom isian di iOS */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    /* background-image (bukan singkatan) supaya warna dasar tetap ada sebelum
+       gradien tergambar dan untuk alat ukur kontras. */
+    background-color: rgb(var(--kanvas));
+    background-image: var(--latar-kaca-hp);
+    background-attachment: scroll;
+  }
+  @media (min-width: 1024px) {
+    body {
+      background-image: var(--latar-kaca);
+    }
+  }
+  :focus-visible {
+    outline: 2px solid rgb(var(--aksen-teks));
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  /* Kolom isian gaya iOS: abu hangat lembut, saat diisi putih + cincin graphite. */
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']),
+  select,
+  textarea {
+    transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s;
+    background-color: var(--isian);
+    border: 1px solid var(--isian-tepi);
+    color: rgb(var(--tinta));
+    outline: none;
+  }
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):focus,
+  select:focus,
+  textarea:focus {
+    background-color: var(--isian-fokus);
+    border-color: rgb(var(--grafit));
+    box-shadow: 0 0 0 4px var(--isian-cincin);
+  }
+  ::placeholder {
+    color: var(--placeholder);
+    opacity: 1;
+  }
+  input[type='checkbox'],
+  input[type='radio'],
+  input[type='range'] {
+    accent-color: rgb(var(--grafit));
+  }
+  select {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: linear-gradient(45deg, transparent 50%, rgb(var(--tinta-3)) 50%),
+      linear-gradient(135deg, rgb(var(--tinta-3)) 50%, transparent 50%);
+    background-position: calc(100% - 18px) 52%, calc(100% - 13px) 52%;
+    background-size: 5px 5px, 5px 5px;
+    background-repeat: no-repeat;
+    padding-right: 2.25rem !important;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgb(var(--garis) / 0.16);
+    border-radius: 9999px;
   }
 }
 
-/* Bottom-sheet slide-up */
-@keyframes sheet-up {
-  from { transform: translateY(100%); }
-  to { transform: translateY(0); }
+/* ==========================================================================
+   KACA. Aturan AgentBuff:
+   1. Kaca butuh cahaya di belakangnya (body = latar bercahaya diam).
+   2. BURAM hanya untuk yang melayang di atas isi bergerak (jendela, bilah
+      menempel). Permukaan di atas latar diam = isian tembus TANPA buram:
+      ringan untuk HP murah dan Safari.
+   3. Di bawah 1024px permukaan lebih pekat (tidak ada buram sama sekali).
+   ========================================================================== */
+@layer components {
+  .kaca-panel {
+    background: var(--kaca-pekat);
+    box-shadow: inset 0 1px 0 var(--kaca-kilau), inset 0 0 0 1px var(--kaca-garis), 0 0 0 1px var(--kaca-tepi-ubin),
+      var(--kaca-bayang);
+  }
+  @media (min-width: 1024px) {
+    .kaca-panel {
+      background: var(--kaca-panel);
+    }
+  }
+  .kaca-pil {
+    background: var(--kaca-pil-isi);
+    box-shadow: inset 0 1px 0 var(--kaca-kilau), 0 0 0 1px var(--kaca-tepi-ubin), 0 1px 2px rgba(24, 22, 18, 0.05);
+  }
+  .kaca-jendela {
+    background: var(--kaca-jendela-hp);
+    box-shadow: inset 0 1px 0 var(--kaca-kilau), inset 0 0 0 1px var(--kaca-garis), 0 40px 100px -20px rgba(24, 22, 18, 0.45);
+  }
+  @media (min-width: 1024px) {
+    .kaca-jendela {
+      background: var(--kaca-jendela);
+      -webkit-backdrop-filter: blur(16px) saturate(180%);
+      backdrop-filter: blur(16px) saturate(180%);
+    }
+  }
+  .kaca-bilah {
+    background: var(--kaca-bilah-isi);
+    box-shadow: 0 1px 0 var(--kaca-tepi-ubin);
+  }
+  @media (min-width: 1024px) {
+    .kaca-bilah {
+      background: var(--kaca-bilah-lebar);
+      -webkit-backdrop-filter: blur(16px) saturate(170%);
+      backdrop-filter: blur(16px) saturate(170%);
+    }
+  }
+  .kaca-kaki {
+    background: var(--kaca-kaki-isi);
+    box-shadow: inset 0 1px 0 var(--kaca-kilau), 0 -1px 0 var(--kaca-tepi-ubin), 0 -12px 30px -18px rgba(24, 22, 18, 0.25);
+  }
+  .panel-samping {
+    background: var(--panel-samping-isi);
+    box-shadow: inset 0 1px 0 var(--kaca-kilau), inset 0 0 0 1px var(--kaca-garis), var(--kaca-bayang);
+  }
+  .kaca-ubin {
+    background: var(--kaca-ubin);
+    box-shadow: inset 0 1px 0 var(--kaca-kilau), 0 0 0 1px var(--kaca-tepi-ubin), 0 1px 2px rgba(24, 22, 18, 0.04);
+    transition: background-color 0.2s, box-shadow 0.2s, transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .kaca-ubin:not([aria-pressed='true']):not([data-aktif='true']):not(:disabled):hover {
+    box-shadow: inset 0 1px 0 var(--kaca-kilau), 0 0 0 1px var(--kaca-tepi-ubin), 0 10px 24px -10px rgba(24, 22, 18, 0.22);
+  }
+  .kaca-ubin:is([aria-pressed='true'], [data-aktif='true']) {
+    background: var(--kaca-ubin-aktif);
+    box-shadow: inset 0 0 0 2px rgb(var(--grafit)), 0 10px 24px -12px rgba(24, 22, 18, 0.28);
+  }
+  .kaca-chip {
+    background: var(--kaca-ubin);
+    color: rgb(var(--tinta-2));
+    box-shadow: inset 0 1px 0 var(--kaca-kilau), 0 0 0 1px var(--kaca-tepi-ubin);
+    transition: background-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.12s;
+  }
+  .kaca-chip:not([aria-pressed='true']):not([data-aktif='true']):not(:disabled):hover {
+    color: rgb(var(--tinta));
+    box-shadow: inset 0 1px 0 var(--kaca-kilau), 0 0 0 1px rgb(var(--garis) / 0.22);
+  }
+  .kaca-chip:active:not(:disabled) {
+    transform: scale(0.96);
+  }
+  .kaca-chip:is([aria-pressed='true'], [data-aktif='true']) {
+    background: rgb(var(--grafit));
+    color: rgb(var(--grafit-teks));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 6px 14px -8px rgba(24, 22, 18, 0.5);
+  }
+  .tombol-grafit {
+    background: rgb(var(--grafit));
+    color: rgb(var(--grafit-teks));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 10px 24px -10px rgba(24, 22, 18, 0.55);
+    transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.15s, background-color 0.15s;
+  }
+  .tombol-grafit:hover:not(:disabled) {
+    background: rgb(var(--hitam));
+  }
+  .tombol-grafit:active:not(:disabled),
+  .tombol-kaca:active:not(:disabled),
+  .tombol-aksen:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+  .tombol-grafit:disabled,
+  .tombol-aksen:disabled {
+    background: rgb(var(--sumur) / 0.16);
+    color: rgb(var(--tinta-3));
+    box-shadow: none;
+    cursor: not-allowed;
+  }
+  .tombol-kaca {
+    background: var(--tombol-kaca-isi);
+    color: rgb(var(--tinta));
+    box-shadow: inset 0 1px 0 var(--kaca-kilau), inset 0 0 0 1px rgb(var(--garis) / 0.14);
+    transition: background-color 0.15s, transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .tombol-kaca:hover:not(:disabled) {
+    background: var(--tombol-kaca-hover);
+  }
+  .tombol-kaca:disabled {
+    color: rgb(var(--tinta-3));
+    cursor: not-allowed;
+  }
+  /* Tombol khas Absentra: hanya untuk Absen masuk/keluar & konfirmasi kirim absen. */
+  .tombol-aksen {
+    background: rgb(var(--aksen-isi));
+    color: rgb(var(--aksen-isi-teks));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 14px 30px -12px rgba(7, 118, 121, 0.6);
+    transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), filter 0.15s;
+  }
+  .tombol-aksen:hover:not(:disabled) {
+    filter: brightness(1.06);
+  }
+  /* Cahaya lembut di belakang maskot: gradien, BUKAN filter blur (berat di Safari). */
+  .cahaya-aksen {
+    background: radial-gradient(closest-side, rgb(var(--aksen) / 0.26), rgb(var(--aksen) / 0.09) 55%, transparent 100%);
+    pointer-events: none;
+  }
+  .titik-hidup {
+    background: rgb(var(--inti));
+    box-shadow: 0 0 0 3px rgba(22, 199, 183, 0.22);
+  }
+  .titik-aksen {
+    background: rgb(var(--aksen));
+    box-shadow: 0 0 0 3px rgb(var(--aksen) / 0.22);
+  }
 }
-.animate-sheet-up { animation: sheet-up 200ms ease-out; }
 
-@keyframes fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+@media (prefers-reduced-transparency: reduce) {
+  .kaca-panel,
+  .kaca-jendela,
+  .kaca-bilah,
+  .panel-samping {
+    background: var(--kaca-pekat);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
 }
-.animate-fade-in { animation: fade-in 150ms ease-out; }
 
-/* Print: show only the .print-area (used for payroll recap → PDF via browser print) */
+/* Gerak: hanya transform/opacity, singkat, berhingga. */
+@keyframes naik-masuk {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes muncul {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes lembar-naik {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+@keyframes jendela-masuk {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* Denyut cincin di belakang tombol Absen: 3 kali lalu diam (hemat baterai). */
+@keyframes cincin-denyut {
+  0% {
+    opacity: 0.55;
+    transform: scale(0.92);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(1.28);
+  }
+}
+@keyframes ayun-pelan {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+.anim-naik {
+  animation: naik-masuk 0.42s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.anim-muncul {
+  animation: muncul 0.2s ease-out both;
+}
+.anim-lembar {
+  animation: lembar-naik 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.anim-jendela {
+  animation: jendela-masuk 0.24s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+/* Lapisan: lembar naik dari bawah di HP, jendela muncul di tengah di laptop. */
+.anim-lapisan {
+  animation: lembar-naik 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@media (min-width: 1024px) {
+  .anim-lapisan {
+    animation-name: jendela-masuk;
+    animation-duration: 0.24s;
+  }
+}
+.anim-ayun {
+  animation: ayun-pelan 4.8s ease-in-out 3;
+}
+.cincin-denyut {
+  /* Lapisan sendiri: denyut tidak memaksa tombol & bayangannya dilukis ulang (Safari). */
+  will-change: transform, opacity;
+  animation: cincin-denyut 2.2s cubic-bezier(0.16, 1, 0.3, 1) 2 forwards;
+}
+
+/* Cetak: tampilkan hanya .print-area (rekap & laporan via dialog cetak peramban). */
 @media print {
-  body { background: #fff; }
-  body * { visibility: hidden; }
-  .print-area, .print-area * { visibility: visible; }
-  .print-area { position: absolute; inset: 0; padding: 16px; }
-  .no-print { display: none !important; }
-  .print-only { display: block !important; }
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+  body * {
+    visibility: hidden;
+  }
+  .print-area,
+  .print-area * {
+    visibility: visible;
+  }
+  .print-area {
+    position: absolute;
+    inset: 0;
+    padding: 16px;
+    box-shadow: none !important;
+    background: #fff !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
 }
-.print-only { display: none; }
+.print-only {
+  display: none;
+}

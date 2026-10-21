@@ -1,57 +1,78 @@
+/** Jadwal shift karyawan: 2 hari ke belakang sampai 2 minggu ke depan, dikelompokkan per minggu. */
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api/client'
 import { useActor } from '@/auth/useActor'
-import { Card, Skeleton, EmptyState, Badge } from '@/components/ui'
-import { IconCalendar, IconClock } from '@/components/ui/icons'
-import { t } from '@/i18n'
-import { formatDayName, formatDateShort, todayISODate } from '@/lib/format'
+import { Badge, Button, EmptyState, KepalaHalaman, Skeleton, cx } from '@/components/ui'
+import { Maskot } from '@/components/merek'
+import { IconClock, IconRefresh } from '@/components/ui/icons'
+import { formatDateShort, formatDayName, tambahHari, todayISODate } from '@/lib/format'
+import { pesanGalat } from '@/lib/galat'
 
-function addDays(iso: string, d: number) {
-  const [y, m, day] = iso.split('-').map(Number)
-  const x = new Date(Date.UTC(y, m - 1, day))
-  x.setUTCDate(x.getUTCDate() + d)
-  return x.toISOString().slice(0, 10)
-}
-
-export function JadwalPage() {
-  const { company, employee } = useActor()
-  const today = todayISODate()
-  const from = addDays(today, -2)
-  const to = addDays(today, 13)
+export default function JadwalPage() {
+  const { company, employeeId } = useActor()
+  const hariIni = todayISODate()
+  const dari = tambahHari(hariIni, -2)
+  const sampai = tambahHari(hariIni, 13)
 
   const q = useQuery({
-    queryKey: ['schedule', company?.id, employee?.id, from, to],
-    enabled: !!company?.id && !!employee?.id,
-    queryFn: () => api.assignmentsForEmployee(company!.id, employee!.id, from, to),
+    queryKey: ['schedule', company?.id, employeeId, dari, sampai],
+    enabled: !!company?.id && !!employeeId,
+    queryFn: () => api.assignmentsForEmployee(undefined, employeeId ?? undefined, dari, sampai),
   })
+  const daftar = (q.data ?? []).slice().sort((a, b) => a.assignment.workDate.localeCompare(b.assignment.workDate))
+  const berikut = daftar.find((x) => x.assignment.workDate >= hariIni)
 
   return (
-    <div className="mx-auto max-w-md">
-      <h1 className="mb-4 text-xl font-bold text-text">{t.nav.jadwal}</h1>
+    <div className="mx-auto max-w-2xl">
+      <div className="flex items-end justify-between gap-3">
+        <KepalaHalaman judul="Jadwal" keterangan="Shift kamu dua minggu ke depan." />
+        <Maskot pose="jadwal" ukuran="kecil" className="-mb-1 shrink-0" />
+      </div>
+
       {q.isLoading ? (
-        <div className="flex flex-col gap-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-16" />)}</div>
-      ) : q.data?.length ? (
-        <div className="flex flex-col gap-2">
-          {q.data.map(({ assignment, template }) => {
-            const isToday = assignment.workDate === today
+        <div className="flex flex-col gap-2">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-[76px]" />)}</div>
+      ) : q.isError ? (
+        <EmptyState title="Jadwal belum bisa dimuat" keterangan={pesanGalat(q.error)} action={<Button variant="secondary" onClick={() => q.refetch()}><IconRefresh width={18} height={18} /> Coba lagi</Button>} />
+      ) : daftar.length === 0 ? (
+        <EmptyState pose="cuti" title="Belum ada jadwal shift" keterangan="Atasanmu belum menyusun jadwal. Kalau kamu harusnya masuk, kabari atasanmu ya." />
+      ) : (
+        <div className="flex flex-col gap-2.5">
+          {berikut && (
+            <p className="mb-1 text-[14px] text-tinta-2">
+              Berikutnya: <span className="font-semibold text-tinta">{berikut.assignment.workDate === hariIni ? 'hari ini' : formatDayName(berikut.assignment.workDate)}</span>, {berikut.template.name} jam {berikut.template.startTime.replace(':', '.')}.
+            </p>
+          )}
+          {daftar.map(({ assignment, template }) => {
+            const hari = assignment.workDate === hariIni
+            const lewat = assignment.workDate < hariIni
             return (
-              <Card key={assignment.id} className={`flex items-center gap-3 ${isToday ? 'border-primary' : ''}`}>
-                <span className="flex h-11 w-11 flex-col items-center justify-center rounded-md bg-surface text-text">
-                  <span className="text-xs text-text-muted">{formatDayName(assignment.workDate).slice(0, 3)}</span>
-                  <span className="text-sm font-bold">{formatDateShort(assignment.workDate).split(' ')[0]}</span>
+              <div
+                key={assignment.id}
+                className={cx(
+                  'flex items-center gap-4 rounded-[22px] px-4 py-3.5',
+                  hari ? 'bg-permukaan shadow-[0_0_0_2px_rgb(var(--grafit)),0_14px_30px_-16px_rgba(24,22,18,0.4)]' : 'kaca-panel',
+                  lewat && 'opacity-60',
+                )}
+              >
+                <span className={cx('flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-2xl', hari ? 'bg-grafit text-grafit-teks' : 'bg-sumur text-tinta')}>
+                  <span className="text-[12px] font-medium capitalize opacity-80">{formatDayName(assignment.workDate).slice(0, 3)}</span>
+                  <span className="text-[19px] font-bold leading-none">{formatDateShort(assignment.workDate).split(' ')[0]}</span>
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="flex items-center gap-1 font-medium text-text"><IconCalendar width={14} height={14} /> {template.name}</p>
-                  <p className="flex items-center gap-1 text-sm text-text-muted"><IconClock width={14} height={14} /> {template.startTime}–{template.endTime}{template.crossesMidnight && ' (+1)'}</p>
+                  <p className="truncate text-[16px] font-semibold text-tinta">{template.name}</p>
+                  <p className="mt-0.5 flex items-center gap-1.5 text-[14px] text-tinta-2">
+                    <IconClock width={15} height={15} /> {template.startTime} sampai {template.endTime}
+                    {template.crossesMidnight && ' (besok)'}
+                  </p>
                 </div>
-                {isToday && <Badge tone="accent">Hari ini</Badge>}
-                {template.crossesMidnight && <Badge tone="neutral">Malam</Badge>}
-              </Card>
+                <div className="flex flex-col items-end gap-1">
+                  {hari && <Badge tone="accent">Hari ini</Badge>}
+                  {template.crossesMidnight && <Badge>Shift malam</Badge>}
+                </div>
+              </div>
             )
           })}
         </div>
-      ) : (
-        <EmptyState title="Belum ada jadwal shift." />
       )}
     </div>
   )

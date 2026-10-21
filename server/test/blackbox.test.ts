@@ -25,7 +25,10 @@ function addDays(iso: string, d: number): string {
 let app: Express
 const TODAY = todayJkt()
 const agent = () => request.agent(app)
-const signin = (a: any, email: string, name = email.split('@')[0], register = true) => a.post('/api/auth/signin').send({ email, name, register })
+const PW = (email: string) => `Rahasia-${email}`
+const signin = (a: any, email: string, name = email.split('@')[0], register = true) => a.post('/api/auth/signin').send({ email, name, register, password: PW(email) })
+// A tiny but real JPEG (magic bytes FF D8 FF) — accepted by the attendance photo validator.
+const JPEG = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q=='
 
 // shared context
 let owner: any, andi: any, rina: any, ownerB: any
@@ -36,6 +39,7 @@ beforeAll(async () => {
   const dir = mkdtempSync(join(tmpdir(), 'absentra-test-'))
   process.env.ABSENTRA_DB = join(dir, 'test.db')
   process.env.PASSWORD_AUTH_ALLOWLIST = '*' // tests use email/password stand-in
+  process.env.ABSENTRA_RATE_LIMIT_DISABLED = '1' // many sign-ins from one test IP
   const mod = await import('../src/app.js')
   app = mod.createApp()
   process.on('exit', () => { try { rmSync(dir, { recursive: true, force: true }) } catch {} })
@@ -54,6 +58,7 @@ beforeAll(async () => {
   await owner.post('/api/shift-assignments').send({ employeeIds: [empAndi], shiftTemplateId: shiftPagi, dateStart: TODAY, skipSundays: false })
 
   andi = agent(); await signin(andi, 'andi@a.test', 'Andi')
+  await andi.post('/api/me/consent').send({ consentLocation: true, consentPhoto: false }) // UU PDP: no clock-in without consent
   rina = agent(); await signin(rina, 'rina@a.test', 'Rina')
 
   // second tenant for isolation
@@ -289,7 +294,8 @@ describe('UC-AB-13 Payroll', () => {
     expect(Array.isArray(r.body.days)).toBe(true)
   })
   it('laporan karyawan di luar scope → 403', async () => {
-    const empSouth = (await owner.post('/api/employees').send({ name: 'Selatan', email: 'selatan@a.test', branchId: branchA2 })).body.id
+    const south = (await owner.post('/api/branches').send({ name: 'Cabang Selatan 2', lat: -6.27, long: 106.79, radiusM: 100 })).body.id // A2 was archived above
+    const empSouth = (await owner.post('/api/employees').send({ name: 'Selatan', email: 'selatan@a.test', branchId: south })).body.id
     expect((await rina.get('/api/reports/employee').query({ employeeId: empSouth, from: TODAY, to: TODAY })).status).toBe(403)
   })
 })
@@ -339,7 +345,8 @@ describe('UC-AB-17 Export & hapus data (UU PDP)', () => {
     const tmp = agent(); await signin(tmp, 'del@a.test')
     const cid = (await tmp.post('/api/companies').send({ displayName: 'Hapus', businessType: 'X', timezone: 'Asia/Jakarta', workweekType: 'six_day' })).body.activeCompanyId
     await tmp.post('/api/branches').send({ name: 'B', lat: -6.2, long: 106.8, radiusM: 100 })
-    expect((await tmp.delete('/api/company')).status).toBe(200)
+    expect((await tmp.delete('/api/company')).status).toBe(400) // re-type the name to confirm
+    expect((await tmp.delete('/api/company').send({ confirmName: 'Hapus' })).status).toBe(200)
     const me = (await tmp.get('/api/auth/me')).body
     expect(me.memberships.find((m: any) => m.company.id === cid)).toBeUndefined()
   })
@@ -443,7 +450,7 @@ describe('UC-AB-25 Clock-in', () => {
     await e.post(`/api/invites/token/${inv.token}/accept`).send({ consentLocation: true, consentPhoto: true })
     const eid = (await e.get('/api/auth/me')).body.employeeId
     await owner.post('/api/shift-assignments').send({ employeeIds: [eid], shiftTemplateId: shiftPagi, dateStart: TODAY, skipSundays: false })
-    const r = await e.post('/api/attendance/clock').send({ kind: 'in', lat: -6.2, long: 106.8166, gpsAccuracyM: 15, livenessPassed: true, cameraAvailable: true, geofenceResult: 'inside', idempotencyKey: 'kci1-aaaa' })
+    const r = await e.post('/api/attendance/clock').send({ kind: 'in', lat: -6.2, long: 106.8166, gpsAccuracyM: 15, livenessPassed: true, cameraAvailable: true, photoData: JPEG, geofenceResult: 'inside', idempotencyKey: 'kci1-aaaa' })
     expect(r.status).toBe(200); expect(r.body.decision).toBe('accepted'); expect(r.body.trustScore).toBe(100)
   })
   it('TC-AB-112 di luar geofence (allow+flag) → flagged & masuk anomaly', async () => {

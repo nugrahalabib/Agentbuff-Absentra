@@ -20,6 +20,17 @@ describe('computeTrustScore', () => {
     expect(r.score).toBe(25) // 100 - 35 - 40
     expect(r.reasons.length).toBe(2)
   })
+  it('offline (late-submitted) events get a small, explained penalty', () => {
+    const r = computeTrustScore({ ...clean, submittedOffline: true })
+    expect(r.score).toBe(95)
+    expect(r.reasons).toContain('Dikirim belakangan (sinyal hilang)')
+  })
+  it('a missing photo (with photo consent) is deducted and explained; absent signal = no deduction', () => {
+    const r = computeTrustScore({ ...clean, photoMissing: true })
+    expect(r.score).toBe(85)
+    expect(r.reasons).toContain('Absen tanpa foto')
+    expect(computeTrustScore({ ...clean, livenessPassed: null }).score).toBe(100) // liveness unknown never deducts
+  })
   it('never goes below 0', () => {
     const r = computeTrustScore({
       geofenceResult: 'outside', gpsAccuracyM: 500, ipGeoConsistent: false,

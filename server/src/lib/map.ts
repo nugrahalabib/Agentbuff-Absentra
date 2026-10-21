@@ -59,9 +59,11 @@ export const mapLeave = (r: any): LeaveRequest => ({
   reason: r.reason ?? undefined, status: r.status, approverId: r.approver_id ?? undefined, decidedAt: r.decided_at ?? undefined,
 })
 
-export const mapOvertime = (r: any): OvertimeRequest => ({
+export const mapOvertime = (r: any): OvertimeRequest & { isDraft: boolean; decidedReason?: string } => ({
   id: r.id, companyId: r.company_id, employeeId: r.employee_id, workDate: r.work_date, hours: r.hours, dayType: r.day_type,
   status: r.status, approverId: r.approver_id ?? undefined, decidedAt: r.decided_at ?? undefined,
+  // Auto-created from a clock-out past shift end; needs confirmation, superseded by a manual request.
+  isDraft: !!r.is_draft, decidedReason: r.decided_reason ?? undefined,
 })
 
 export const mapPolicy = (r: any): Policy => ({

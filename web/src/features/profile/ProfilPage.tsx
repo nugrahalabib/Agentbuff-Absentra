@@ -1,115 +1,144 @@
-import { useState } from 'react'
+/** Akun saya: identitas, foto profil, tampilan (terang/gelap/ikut HP), usaha, kata sandi, keluar. */
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient, useMutation } from '@tanstack/react-query'
 import { useActor } from '@/auth/useActor'
+import { useKeluar } from '@/auth/useKeluar'
 import { api } from '@/lib/api/client'
-import { Button, Card, Badge, Field, Input } from '@/components/ui'
-import { IconUser, IconLogout, IconSwitch, IconCamera } from '@/components/ui/icons'
-import { t } from '@/i18n'
+import { Button, Field, Input, KepalaHalaman, PesanGalat } from '@/components/ui'
+import { IconCamera, IconCheck, IconLogout, IconMonitor, IconMoon, IconSun } from '@/components/ui/icons'
+import { toast } from '@/components/Toast'
+import { bacaPilihanTema, simpanPilihanTema, type PilihanTema } from '@/lib/tema'
+import { kecilkanGambar } from '@/lib/gambar'
+import { pesanGalat } from '@/lib/galat'
 
-const roleLabel: Record<string, string> = { owner: 'Owner / Super Admin', branch_admin: 'Branch Admin', hr: 'HR / Approver', employee: 'Karyawan' }
+const PERAN: Record<string, string> = { owner: 'Pemilik', branch_admin: 'Admin cabang', hr: 'HR', employee: 'Karyawan' }
 
-export function ProfilPage() {
+export default function ProfilPage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const { user, company, role, memberships, activeCompanyId, employeeId, hasPassword, passwordAuthAllowed } = useActor()
-  const [photo, setPhoto] = useState<string | null>(null)
-  const uploadPhoto = useMutation({ mutationFn: (dataUrl: string) => api.uploadProfilePhoto(dataUrl), onSuccess: () => qc.invalidateQueries({ queryKey: ['employees'] }) })
+  const [foto, setFoto] = useState<string | null>(null)
+  const [tema, setTema] = useState<PilihanTema>(() => bacaPilihanTema())
+  const unggah = useMutation({
+    mutationFn: (d: string) => api.uploadProfilePhoto(d),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['employees'] }); toast.berhasil('Foto profil tersimpan.') },
+    onError: (e) => { setFoto(null); toast.galat(pesanGalat(e)) },
+  })
 
-  const onPhoto = (file: File | undefined) => {
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = () => { const url = String(reader.result); setPhoto(url); uploadPhoto.mutate(url) }
-    reader.readAsDataURL(file)
+  useEffect(() => {
+    const ubah = () => setTema(bacaPilihanTema())
+    window.addEventListener('absentra:tema', ubah)
+    return () => window.removeEventListener('absentra:tema', ubah)
+  }, [])
+
+  const pilihFoto = (f?: File) => {
+    if (!f) return
+    void kecilkanGambar(f, 480)
+      .then((d) => { setFoto(d); unggah.mutate(d) })
+      .catch(() => toast.galat('Gambar tidak bisa dibaca.'))
   }
-
-  const doLogout = async () => { await api.signout(); await qc.invalidateQueries({ queryKey: ['me'] }); navigate('/') }
-  const doSwitch = async (cid: string) => { await api.switchTenant(cid); await qc.invalidateQueries(); navigate('/absen') }
+  const keluar = useKeluar()
+  const pindah = async (cid: string) => {
+    try {
+      await api.switchTenant(cid)
+      qc.clear()
+      navigate('/', { replace: true })
+    } catch (e) {
+      toast.galat(pesanGalat(e))
+    }
+  }
+  const inisial = (user?.name ?? '').split(/\s+/).map((x) => x[0]).slice(0, 2).join('').toUpperCase()
 
   return (
-    <div className="mx-auto max-w-md">
-      <h1 className="mb-4 text-xl font-bold text-text">{t.nav.profil}</h1>
+    <div className="mx-auto max-w-2xl">
+      <KepalaHalaman judul="Akun saya" />
 
-      <Card className="mb-3 flex items-center gap-3">
-        <span className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary"><IconUser width={26} height={26} /></span>
-        <div>
-          <p className="font-semibold text-text">{user?.name}</p>
-          <p className="text-xs text-text-muted">{user?.email}</p>
-          {role && <Badge tone="accent">{roleLabel[role]}</Badge>}
-        </div>
-      </Card>
-
-      {employeeId && (
-        <Card className="mb-3">
-          <p className="mb-2 text-sm font-medium text-text">Foto profil</p>
-          <p className="mb-3 text-xs text-text-muted">Agar admin & HR mudah mengenalimu.</p>
-          <div className="flex items-center gap-3">
-            <span className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-full bg-surface text-text-muted">
-              {photo ? <img src={photo} alt="Foto profil" className="h-full w-full object-cover" /> : <IconUser width={28} height={28} />}
-            </span>
-            <label className="cursor-pointer">
-              <span className="inline-flex min-h-touch items-center gap-2 rounded-md border border-border px-4 text-sm font-semibold text-text hover:bg-surface">
-                <IconCamera width={18} height={18} /> {photo ? 'Ganti foto' : 'Unggah foto'}
-              </span>
-              <input type="file" accept="image/*" capture="user" className="hidden" onChange={(e) => onPhoto(e.target.files?.[0])} />
+      <section className="kaca-panel flex items-center gap-4 rounded-[28px] p-5">
+        <div className="relative">
+          <span className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-full bg-grafit text-[20px] font-bold text-grafit-teks">
+            {foto ? <img src={foto} alt="Foto profil" className="h-full w-full object-cover" /> : inisial}
+          </span>
+          {employeeId && (
+            <label className="absolute -bottom-1 -right-1 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full bg-permukaan text-tinta shadow-lembut" aria-label="Ganti foto profil">
+              <IconCamera width={16} height={16} />
+              <input type="file" accept="image/*" className="sr-only" onChange={(e) => pilihFoto(e.target.files?.[0])} />
             </label>
-            {uploadPhoto.isSuccess && <span className="text-sm text-success">Tersimpan ✓</span>}
-          </div>
-        </Card>
-      )}
+          )}
+        </div>
+        <div className="min-w-0">
+          <p className="truncate text-[19px] font-semibold text-tinta">{user?.name}</p>
+          <p className="truncate text-[14px] text-tinta-3">{user?.email}</p>
+          <p className="mt-1 text-[14px] text-tinta-2">{role ? PERAN[role] : ''}{company ? ` di ${company.displayName}` : ''}</p>
+        </div>
+      </section>
 
-      <Card className="mb-3">
-        <p className="text-sm text-text-muted">Perusahaan aktif</p>
-        <p className="font-medium text-text">{company?.displayName}</p>
-        <p className="text-xs text-text-muted">Zona waktu: {company?.timezone} · Minggu kerja: {company?.workweekType === 'six_day' ? '6 hari' : '5 hari'}</p>
-      </Card>
+      <section className="kaca-panel mt-4 rounded-[28px] p-5">
+        <h2 className="text-[17px] font-semibold text-tinta">Tampilan</h2>
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          {([
+            ['terang', 'Terang', <IconSun key="s" width={20} height={20} />],
+            ['gelap', 'Gelap', <IconMoon key="m" width={20} height={20} />],
+            ['sistem', 'Ikut HP', <IconMonitor key="p" width={20} height={20} />],
+          ] as const).map(([v, l, ikon]) => (
+            <button key={v} type="button" aria-pressed={tema === v} onClick={() => { simpanPilihanTema(v); setTema(v) }} className="kaca-ubin flex min-h-[72px] flex-col items-center justify-center gap-1.5 rounded-[18px] text-[14px] font-semibold text-tinta">
+              {ikon}{l}
+            </button>
+          ))}
+        </div>
+      </section>
 
       {memberships.length > 1 && (
-        <Card className="mb-3">
-          <p className="mb-2 text-sm font-medium text-text">{t.common.switchTenant}</p>
-          <div className="flex flex-col gap-2">
+        <section className="kaca-panel mt-4 rounded-[28px] p-5">
+          <h2 className="text-[17px] font-semibold text-tinta">Usahaku</h2>
+          <div className="mt-3 flex flex-col gap-2">
             {memberships.map((m) => (
-              <Button key={m.company.id} variant={m.company.id === activeCompanyId ? 'primary' : 'secondary'} fullWidth onClick={() => doSwitch(m.company.id)}>
-                <IconSwitch width={16} height={16} /> {m.company.displayName} · {roleLabel[m.membership.role]}
-              </Button>
+              <button key={m.company.id} type="button" data-aktif={m.company.id === activeCompanyId} onClick={() => pindah(m.company.id)} className="kaca-ubin flex min-h-[56px] items-center justify-between gap-3 rounded-[18px] px-4 text-left">
+                <span>
+                  <span className="block text-[15px] font-semibold text-tinta">{m.company.displayName}</span>
+                  <span className="block text-[13px] text-tinta-3">{PERAN[m.membership.role] ?? m.membership.role}</span>
+                </span>
+                {m.company.id === activeCompanyId && <IconCheck width={18} height={18} className="text-tinta" />}
+              </button>
             ))}
           </div>
-        </Card>
+        </section>
       )}
 
-      {passwordAuthAllowed && <PasswordCard hasPassword={hasPassword} />}
+      {passwordAuthAllowed && <KataSandi adaSandi={hasPassword} />}
 
-      <Button variant="ghost" fullWidth onClick={doLogout}><IconLogout width={18} height={18} /> {t.nav.keluar}</Button>
+      <Button variant="secondary" fullWidth size="lg" className="mt-5 !text-galat" onClick={keluar}><IconLogout width={20} height={20} /> Keluar</Button>
     </div>
   )
 }
 
-function PasswordCard({ hasPassword }: { hasPassword: boolean }) {
-  const [current, setCurrent] = useState('')
-  const [next, setNext] = useState('')
-  const [confirm, setConfirm] = useState('')
-  const [err, setErr] = useState<string | null>(null)
+function KataSandi({ adaSandi }: { adaSandi: boolean }) {
+  const [lama, setLama] = useState('')
+  const [baru, setBaru] = useState('')
+  const [ulang, setUlang] = useState('')
+  const [galat, setGalat] = useState<string | null>(null)
   const m = useMutation({
-    mutationFn: () => api.changePassword(next, current || undefined),
-    onSuccess: () => { setCurrent(''); setNext(''); setConfirm(''); setErr(null) },
-    onError: (e: any) => setErr(e?.body?.error === 'invalid_current' ? 'Password lama salah.' : 'Gagal mengubah password.'),
+    mutationFn: () => api.changePassword(baru, lama || undefined),
+    onSuccess: () => { setLama(''); setBaru(''); setUlang(''); toast.berhasil('Kata sandi tersimpan.') },
+    onError: (e) => setGalat(pesanGalat(e)),
   })
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault(); setErr(null)
-    if (next.length < 6) return setErr('Password baru minimal 6 karakter.')
-    if (next !== confirm) return setErr('Konfirmasi password tidak cocok.')
+  const kirim = (e: React.FormEvent) => {
+    e.preventDefault()
+    setGalat(null)
+    if (baru.length < 8) return setGalat('Kata sandi baru minimal 8 karakter.')
+    if (baru !== ulang) return setGalat('Ulangi kata sandi belum sama.')
     m.mutate()
   }
   return (
-    <Card className="mb-3">
-      <p className="mb-2 text-sm font-medium text-text">{hasPassword ? 'Ubah password' : 'Atur password'}</p>
-      {!hasPassword && <p className="mb-2 text-xs text-text-muted">Akun kamu login via Google. Set password agar bisa masuk tanpa Google bila perlu.</p>}
-      <form className="flex flex-col gap-2" onSubmit={submit}>
-        {hasPassword && <Field label="Password lama"><Input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} required autoComplete="current-password" /></Field>}
-        <Field label="Password baru" error={err ?? undefined}><Input type="password" value={next} onChange={(e) => setNext(e.target.value)} required minLength={6} autoComplete="new-password" /></Field>
-        <Field label="Konfirmasi password baru"><Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required minLength={6} autoComplete="new-password" /></Field>
-        <Button type="submit" loading={m.isPending}>{m.isSuccess ? 'Tersimpan ✓' : 'Simpan password'}</Button>
+    <section className="kaca-panel mt-4 rounded-[28px] p-5">
+      <h2 className="text-[17px] font-semibold text-tinta">{adaSandi ? 'Ganti kata sandi' : 'Buat kata sandi'}</h2>
+      <form className="mt-3 flex flex-col gap-3" onSubmit={kirim}>
+        {adaSandi && <Field label="Kata sandi lama"><Input type="password" value={lama} onChange={(e) => setLama(e.target.value)} required autoComplete="current-password" /></Field>}
+        <Field label="Kata sandi baru"><Input type="password" value={baru} onChange={(e) => setBaru(e.target.value)} required minLength={8} autoComplete="new-password" /></Field>
+        <Field label="Ulangi kata sandi baru"><Input type="password" value={ulang} onChange={(e) => setUlang(e.target.value)} required minLength={8} autoComplete="new-password" /></Field>
+        <PesanGalat>{galat}</PesanGalat>
+        <Button type="submit" loading={m.isPending}>Simpan</Button>
       </form>
-    </Card>
+    </section>
   )
 }
