@@ -6,7 +6,7 @@ import './lib/db.js' // initialise schema (reads ABSENTRA_DB)
 import { config } from './lib/config.js'
 import { loadContext } from './lib/context.js'
 import { requestContext } from './lib/audit.js'
-import { originGuard } from './lib/httpSecurity.js'
+import { isSecureRequest, originGuard } from './lib/httpSecurity.js'
 import { authRouter } from './routes/auth.js'
 import { companyRouter } from './routes/company.js'
 import { orgRouter } from './routes/org.js'
@@ -35,6 +35,27 @@ export function errorHandler(err: any, req: express.Request, res: express.Respon
   res.status(500).json({ error: 'internal', message: 'Terjadi kesalahan pada server. Silakan coba lagi.' })
 }
 
+/**
+ * Semua skrip dari asal sendiri (tema-awal.js sengaja berkas terpisah, bukan inline).
+ * Gaya inline dipakai React (style={{...}}), jadi style-src butuh 'unsafe-inline'.
+ * Foto absen, logo, dan QR berupa data:/blob:. Tidak boleh dibingkai situs lain.
+ */
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "media-src 'self' blob:",
+  "manifest-src 'self'",
+  "worker-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self' https://agentbuff.id https://accounts.google.com",
+  "frame-ancestors 'none'",
+].join('; ')
+
 export function createApp() {
   const app = express()
   app.disable('x-powered-by')
@@ -48,9 +69,14 @@ export function createApp() {
     const devOrigins = [...new Set([config.appOrigin, 'http://localhost:7707', 'http://localhost:5173'])]
     app.use(cors({ origin: devOrigins, credentials: true }))
   }
-  app.use((_req, res, next) => {
+  app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff')
     res.setHeader('Referrer-Policy', 'same-origin')
+    res.setHeader('X-Frame-Options', 'DENY')
+    res.setHeader('Content-Security-Policy', CSP)
+    // Kamera & lokasi hanya untuk halaman Absentra sendiri; sisanya dimatikan.
+    res.setHeader('Permissions-Policy', 'camera=(self), geolocation=(self), microphone=(), payment=(), usb=()')
+    if (isSecureRequest(req)) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
     next()
   })
   app.use(originGuard) // CSRF: reject cross-site state-changing /api calls (production)

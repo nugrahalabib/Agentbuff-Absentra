@@ -263,6 +263,18 @@ describe('#5 CSRF origin guard + Secure cookies', () => {
     const plain = await request(app).post('/api/auth/signin').send({ email: 'andi@s.test', password: PW('andi@s.test'), register: false })
     expect((plain.headers['set-cookie'] as unknown as string[]).find((x) => x.startsWith('absentra_sid='))).not.toMatch(/Secure/)
   })
+  it('sends protective headers: CSP without inline scripts, no framing, camera/location only for itself, HSTS over HTTPS', async () => {
+    const r = await request(app).get('/api/health').set('X-Forwarded-Proto', 'https')
+    const csp = String(r.headers['content-security-policy'])
+    expect(csp).toMatch(/script-src 'self'(;|$)/)
+    expect(csp).toMatch(/frame-ancestors 'none'/)
+    expect(csp).toMatch(/object-src 'none'/)
+    expect(r.headers['x-frame-options']).toBe('DENY')
+    expect(String(r.headers['permissions-policy'])).toMatch(/camera=\(self\)/)
+    expect(String(r.headers['permissions-policy'])).toMatch(/microphone=\(\)/)
+    expect(String(r.headers['strict-transport-security'])).toMatch(/max-age=\d+/)
+    expect((await request(app).get('/api/health')).headers['strict-transport-security']).toBeUndefined()
+  })
 })
 
 // ---------------------------------------------------------------- 6 passwordless
