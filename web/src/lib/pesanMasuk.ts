@@ -9,7 +9,7 @@ export function pesanMasuk(kode: string): string {
       return 'Pemilik usaha masuk lewat tombol "Masuk dengan AgentBuff". Karyawan tetap masuk dengan Google, pakai email yang didaftarkan atasannya.'
     case 'belum_beli':
     case 'not_purchased':
-      return 'Akun AgentBuff ini belum punya Absentra. Ambil dulu di Marketplace AgentBuff (gratis), lalu masuk lagi.'
+      return 'Akun AgentBuff ini belum punya Absentra. Ambil dulu di Marketplace AgentBuff (Rp49.000 sekali bayar), lalu masuk lagi.'
     case 'akses_berakhir':
     case 'access_lapsed':
       return 'Masa aktif AgentBuff-mu sudah habis. Perpanjang di agentbuff.id, data absensimu tetap aman tersimpan.'

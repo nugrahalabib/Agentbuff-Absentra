@@ -78,7 +78,7 @@ function Navigasi() {
             {tema === 'dark' ? <IconSun width={19} height={19} /> : <IconMoon width={19} height={19} />}
           </button>
           <Link to="/masuk" className="flex h-10 items-center whitespace-nowrap rounded-full px-2.5 text-[15px] font-semibold text-tinta hover:bg-sumur sm:px-4">Masuk</Link>
-          <Link to="/daftar" className="tombol-grafit flex h-10 shrink-0 items-center whitespace-nowrap rounded-full px-3.5 text-[15px] font-semibold sm:px-4">Coba gratis</Link>
+          <Link to="/daftar" className="tombol-grafit flex h-10 shrink-0 items-center whitespace-nowrap rounded-full px-3.5 text-[15px] font-semibold sm:px-4">Daftar</Link>
         </div>
       </div>
     </header>
@@ -284,17 +284,18 @@ function Harga() {
       <div className="grid items-center gap-10 lg:grid-cols-2">
         <div className="lp-muncul">
           <p className="text-[15px] font-semibold lp-teks-aksen">Harga</p>
-          <h2 className="mt-2 text-[34px] font-bold leading-[1.05] tracking-[-0.04em] text-tinta sm:text-[44px]">Absentra gratis untuk pemilik akun AgentBuff.</h2>
-          <p className="mt-4 text-[17px] leading-relaxed text-tinta-2">Ambil Absentra di Marketplace AgentBuff dengan harga Rp0. Yang kamu perlukan cuma akun AgentBuff yang aktif, dan akun baru bisa dicoba gratis dulu.</p>
+          <h2 className="mt-2 text-[34px] font-bold leading-[1.05] tracking-[-0.04em] text-tinta sm:text-[44px]">Sekali bayar, tanpa biaya per karyawan.</h2>
+          <p className="mt-4 text-[17px] leading-relaxed text-tinta-2">Ambil Absentra di Marketplace AgentBuff seharga Rp49.000, sekali saja. Yang kamu perlukan cuma akun AgentBuff yang aktif, dan akun baru bisa dicoba gratis dulu.</p>
         </div>
         <div className="lp-muncul kaca-panel rounded-[32px] p-7">
           <div className="flex items-baseline gap-2">
-            <span className="text-[56px] font-bold leading-none tracking-[-0.05em] text-tinta">Rp0</span>
-            <span className="text-[16px] text-tinta-3">untuk Absentra</span>
+            <span className="text-[56px] font-bold leading-none tracking-[-0.05em] text-tinta">Rp49.000</span>
+            <span className="text-[16px] text-tinta-3">sekali bayar</span>
           </div>
           <ul className="mt-6 flex flex-col gap-3">
             {[
               'Karyawan tidak perlu bayar dan tidak perlu akun AgentBuff',
+              'Tanpa biaya per karyawan, tanpa tagihan bulanan',
               'Tanpa mesin absen dan tanpa biaya pasang',
               'Rekap gaji, laporan, dan ekspor Excel sudah termasuk',
               'Kalau akses AgentBuff-mu berhenti, data absensi tetap tersimpan',
@@ -302,9 +303,10 @@ function Harga() {
               <li key={x} className="flex gap-3 text-[15px] text-tinta-2"><IconCheckCircle width={20} height={20} className="mt-0.5 shrink-0 text-aksen-teks" /> {x}</li>
             ))}
           </ul>
-          <Link to="/daftar" className="tombol-grafit mt-7 flex min-h-[54px] items-center justify-center gap-2 rounded-full text-[16px] font-semibold">
-            Daftarkan usahamu <IconArrowRight width={18} height={18} />
-          </Link>
+          <a href="https://agentbuff.id/marketplace/absentra" className="tombol-grafit mt-7 flex min-h-[54px] items-center justify-center gap-2 rounded-full text-[16px] font-semibold">
+            Ambil di Marketplace <IconArrowRight width={18} height={18} />
+          </a>
+          <Link to="/masuk" className="mt-3 flex min-h-[44px] items-center justify-center text-[15px] font-semibold text-tinta-2 hover:text-tinta">Sudah punya? Masuk ke Absentra</Link>
         </div>
       </div>
     </section>
