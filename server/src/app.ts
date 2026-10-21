@@ -39,14 +39,15 @@ export function errorHandler(err: any, req: express.Request, res: express.Respon
  * Semua skrip dari asal sendiri (tema-awal.js sengaja berkas terpisah, bukan inline).
  * Gaya inline dipakai React (style={{...}}), jadi style-src butuh 'unsafe-inline'.
  * Foto absen, logo, dan QR berupa data:/blob:. Tidak boleh dibingkai situs lain.
+ * Cloudflare Web Analytics menyisipkan beacon-nya di tepi jaringan (sama dengan agentbuff.id).
  */
 const CSP = [
   "default-src 'self'",
-  "script-src 'self'",
+  "script-src 'self' https://static.cloudflareinsights.com",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
-  "connect-src 'self'",
+  "connect-src 'self' https://cloudflareinsights.com",
   "media-src 'self' blob:",
   "manifest-src 'self'",
   "worker-src 'self'",

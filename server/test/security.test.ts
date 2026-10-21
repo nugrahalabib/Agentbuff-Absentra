@@ -266,7 +266,8 @@ describe('#5 CSRF origin guard + Secure cookies', () => {
   it('sends protective headers: CSP without inline scripts, no framing, camera/location only for itself, HSTS over HTTPS', async () => {
     const r = await request(app).get('/api/health').set('X-Forwarded-Proto', 'https')
     const csp = String(r.headers['content-security-policy'])
-    expect(csp).toMatch(/script-src 'self'(;|$)/)
+    expect(csp).toMatch(/script-src 'self'( https:\/\/static\.cloudflareinsights\.com)?(;|$)/)
+    expect(csp).not.toMatch(/script-src[^;]*unsafe/)
     expect(csp).toMatch(/frame-ancestors 'none'/)
     expect(csp).toMatch(/object-src 'none'/)
     expect(r.headers['x-frame-options']).toBe('DENY')
