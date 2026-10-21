@@ -77,8 +77,8 @@ function Navigasi() {
           >
             {tema === 'dark' ? <IconSun width={19} height={19} /> : <IconMoon width={19} height={19} />}
           </button>
-          <Link to="/masuk" className="flex h-10 items-center rounded-full px-3 text-[15px] font-semibold text-tinta hover:bg-sumur sm:px-4">Masuk</Link>
-          <Link to="/daftar" className="tombol-grafit flex h-10 items-center rounded-full px-4 text-[15px] font-semibold">Coba gratis</Link>
+          <Link to="/masuk" className="flex h-10 items-center whitespace-nowrap rounded-full px-2.5 text-[15px] font-semibold text-tinta hover:bg-sumur sm:px-4">Masuk</Link>
+          <Link to="/daftar" className="tombol-grafit flex h-10 shrink-0 items-center whitespace-nowrap rounded-full px-3.5 text-[15px] font-semibold sm:px-4">Coba gratis</Link>
         </div>
       </div>
     </header>
