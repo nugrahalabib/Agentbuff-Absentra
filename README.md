@@ -342,3 +342,10 @@ All rights reserved. See [LICENSE](LICENSE). Absentra is a paid product on the A
 ---
 
 <sub>Made by [Nugraha Labib Mujaddid](https://github.com/nugrahalabib) · [nugrahalabib.com](https://nugrahalabib.com) · [nugrahalabib@gmail.com](mailto:nugrahalabib@gmail.com)</sub>
+
+## Related
+
+- [KostCloud](https://github.com/nugrahalabib/agentbuff-kostcloud-showcase)
+- [Kasir POS](https://github.com/nugrahalabib/agentbuff-pos-showcase)
+- [AgentBuff](https://github.com/nugrahalabib/agentbuff-showcase)
+- [All my work on GitHub](https://github.com/nugrahalabib)
